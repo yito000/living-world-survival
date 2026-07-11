@@ -8,6 +8,7 @@ Per BSD 4.3 / R7, no heavy work is placed in the request handler path.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import os
 from collections.abc import AsyncIterator
@@ -37,11 +38,19 @@ async def _connect_nats() -> None:
     url = os.getenv("NATS_URL", "nats://localhost:4222")
     if nats is None:
         return
+    # 起動時に NATS が未起動でも lifespan を無限ブロックしないよう、初回接続は
+    # 失敗即時（retry_on_failed_connect=False）+ 全体タイムアウトで打ち切る。
+    # 一度接続できれば、以降の切断は max_reconnect_attempts=-1 で自動再接続する。
     with contextlib.suppress(Exception):
-        state.nc = await nats.connect(
-            url,
-            max_reconnect_attempts=-1,
-            reconnect_time_wait=2,
+        state.nc = await asyncio.wait_for(
+            nats.connect(
+                url,
+                max_reconnect_attempts=-1,
+                reconnect_time_wait=2,
+                connect_timeout=2,
+                retry_on_failed_connect=False,
+            ),
+            timeout=6,
         )
 
 

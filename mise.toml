@@ -32,3 +32,5 @@ lockfile = true
 # ビルドキャッシュは WSL2 ホーム側へ（/mnt/c・/mnt/d の I/O 遅延を避ける — 03B 5.5）
 GOCACHE = "{{env.HOME}}/.cache/go-build"
 UV_CACHE_DIR = "{{env.HOME}}/.cache/uv"
+# venv(/mnt/d) と cache(~) が別FSで hardlink 不可のため copy に固定（警告抑制）
+UV_LINK_MODE = "copy"
