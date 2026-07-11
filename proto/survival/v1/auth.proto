@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package survival.v1;
+
+// Auth / Matchmaking Internal gRPC（MVP 11.2 / 11.3）。
+// Dedicated Server ⇔ Auth 間で使用する。
+
+service MatchmakingService {
+  // Join Ticket を単回使用で引き換える（used_at IS NULL 条件更新）。
+  rpc RedeemJoinTicket(RedeemJoinTicketRequest) returns (RedeemJoinTicketResponse);
+  // Dedicated Server の登録/更新。
+  rpc RegisterServer(RegisterServerRequest) returns (RegisterServerResponse);
+  // 生存報告。
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+  // Matchmaking 対象外へ（ドレイン）。
+  rpc MarkDraining(MarkDrainingRequest) returns (MarkDrainingResponse);
+}
+
+// Join Ticket のクレーム（MVP 11.3）。
+message JoinTicketClaims {
+  string ticket_id = 1;
+  string account_id = 2;
+  string character_id = 3;
+  string server_id = 4;
+  string world_id = 5;
+  string build_id = 6;
+  int64 issued_at_unix_ms = 7;
+  int64 expires_at_unix_ms = 8;
+  string nonce = 9;
+}
+
+message RedeemJoinTicketRequest {
+  string server_id = 1;
+  string ticket = 2; // 署名付きトークン
+}
+
+message RedeemJoinTicketResponse {
+  bool ok = 1;
+  string error = 2;
+  JoinTicketClaims claims = 3;
+}
+
+message RegisterServerRequest {
+  string server_id = 1;
+  string world_id = 2;
+  string build_id = 3;
+  string endpoint = 4;
+  int32 capacity = 5;
+}
+
+message RegisterServerResponse {
+  bool ok = 1;
+}
+
+message HeartbeatRequest {
+  string server_id = 1;
+  int32 players = 2;
+  bool ready = 3;
+  int32 tick_ms = 4;
+}
+
+message HeartbeatResponse {
+  bool ok = 1;
+}
+
+message MarkDrainingRequest {
+  string server_id = 1;
+}
+
+message MarkDrainingResponse {
+  bool ok = 1;
+}

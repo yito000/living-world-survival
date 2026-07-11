@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package survival.v1;
+
+// 共通型（MVP 13/14章）。
+// 通貨・数量は最小単位の整数で表す（float 禁止・MVP 13.1）。
+
+// 金額（最小通貨単位, 整数）。
+message Money {
+  int64 amount = 1;
+}
+
+// アイテム参照。
+message ItemRef {
+  string item_definition_id = 1;
+  // 個体を指す場合のみ設定（品質/耐久を持つ個体）。
+  string item_instance_id = 2;
+}
+
+// インベントリ内の1エントリ。
+message InventoryEntry {
+  int32 slot_index = 1;
+  ItemRef item = 2;
+  int32 quantity = 3;
+  int32 reserved = 4;
+}
+
+// ドメインイベント（DS が採番, API が永続確定 — MVP 13.1）。
+message DomainEvent {
+  string event_id = 1;      // ULID（DS 生成）
+  string world_id = 2;
+  string aggregate_id = 3;
+  int64 local_sequence = 4; // aggregate 内順序（DS 生成）
+  string type = 5;
+  bytes payload = 6;        // JSON エンコード済みペイロード
+  int64 occurred_at_unix_ms = 7;
+}
+
+// 共通の結果ステータス。
+enum ResultStatus {
+  RESULT_STATUS_UNSPECIFIED = 0;
+  RESULT_STATUS_OK = 1;
+  RESULT_STATUS_DUPLICATE = 2;
+  RESULT_STATUS_CONFLICT = 3;
+  RESULT_STATUS_REJECTED = 4;
+}

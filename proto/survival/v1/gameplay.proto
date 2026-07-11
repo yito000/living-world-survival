@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package survival.v1;
+
+import "survival/v1/common.proto";
+
+// Gameplay Commands（FishNet, MVP 14.1）。
+// Client → Dedicated Server の入力・操作コマンド。message のみ。
+
+message Vec3 {
+  // 座標は float 許容（通貨・数量ではない）。
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message InputCommand {
+  int64 tick = 1;
+  int64 sequence = 2;
+  Vec3 move = 3;
+  Vec3 look = 4;
+  bool jump = 5;
+  bool sprint = 6;
+}
+
+message InteractCommand {
+  string command_id = 1;
+  uint32 target_network_id = 2;
+  string interaction_type = 3;
+  int64 expected_version = 4;
+}
+
+message PrimaryActionCommand {
+  string command_id = 1;
+  int32 equipment_slot = 2;
+  Vec3 aim_origin = 3;
+  Vec3 aim_direction = 4;
+  int64 client_tick = 5;
+}
+
+enum InventoryOperation {
+  INVENTORY_OPERATION_UNSPECIFIED = 0;
+  INVENTORY_OPERATION_MOVE = 1;
+  INVENTORY_OPERATION_SPLIT = 2;
+  INVENTORY_OPERATION_MERGE = 3;
+  INVENTORY_OPERATION_DROP = 4;
+  INVENTORY_OPERATION_USE = 5;
+}
+
+message InventoryCommand {
+  string command_id = 1;
+  int64 expected_version = 2;
+  InventoryOperation operation = 3;
+  ItemRef item_ref = 4;
+  int32 quantity = 5;
+  ItemRef target_ref = 6;
+}
+
+message BuyerPurchaseCommand {
+  string command_id = 1;
+  string buyer_instance_id = 2;
+  string stock_entry_id = 3;
+  int64 inventory_version = 4;
+}
+
+message RequestInventorySnapshot {
+  int64 last_known_version = 1;
+}

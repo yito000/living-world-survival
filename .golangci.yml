@@ -1,0 +1,42 @@
+# Go 静的解析設定（03B 5.2）— golangci-lint v2 形式
+# 通貨は BIGINT（整数）。float 混入を forbidigo で監視（MVP 13.1）。
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - revive
+    - misspell
+    - forbidigo
+  settings:
+    forbidigo:
+      # 通貨・数量計算に浮動小数点を持ち込ませない。金額は int64 の最小単位で扱う。
+      forbid:
+        - pattern: '\bfloat32\b'
+          msg: "通貨・数量に float32 を使わない（int64/BIGINT を使用）— MVP 13.1"
+        - pattern: '\bfloat64\b'
+          msg: "通貨・数量に float64 を使わない（int64/BIGINT を使用）— MVP 13.1。座標等で必要なら //nolint:forbidigo を明示"
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+  exclusions:
+    generated: lax
+    paths:
+      - services/gen
+
+formatters:
+  enable:
+    - gofmt
+  exclusions:
+    generated: lax
+    paths:
+      - services/gen

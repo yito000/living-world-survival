@@ -1,0 +1,25 @@
+# buf generate 設定（03B 5.4）
+# Go/Python は services/gen 配下、C# は Unity プロジェクトへ出力する（0.4/0.5）。
+version: v2
+managed:
+  enabled: true
+  override:
+    # Go の import path prefix。各サービスは module: living-world-survival/services/gen/go を参照。
+    - file_option: go_package_prefix
+      value: living-world-survival/services/gen/go
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: services/gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: services/gen/go
+    opt: paths=source_relative
+  - remote: buf.build/protocolbuffers/python
+    out: services/gen/python
+  - remote: buf.build/grpc/python
+    out: services/gen/python
+  # C#（Unity が消費）— gRPC + messages
+  - remote: buf.build/grpc/csharp
+    out: unity/SurvivalWorld/Assets/Generated
+  - remote: buf.build/protocolbuffers/csharp
+    out: unity/SurvivalWorld/Assets/Generated

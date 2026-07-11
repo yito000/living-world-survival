@@ -1,0 +1,65 @@
+# M0 ローカルインフラ + サービス（03B 4章）
+# 起動: make up（postgres/nats のみ） / make smoke（全サービス）
+
+# プロジェクト名を明示する。既定は compose ファイルの親ディレクトリ名(=infra)になり、
+# 他プロジェクトの infra/ と衝突して orphan 警告やコンテナ混在が起きるため固定する。
+name: living-world-survival
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: survival
+      POSTGRES_PASSWORD: survival
+      POSTGRES_DB: survival
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U survival"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2
+    # JetStream 有効化(-js) + monitoring(-m 8222)。設定は nats.conf を読む。
+    command: ["-c", "/etc/nats/nats.conf"]
+    volumes: ["./nats/nats.conf:/etc/nats/nats.conf:ro"]
+    ports: ["4222:4222", "8222:8222"]
+    # 注: nats 公式イメージは scratch ベースで wget/curl/sh を含まないため、
+    # コンテナ内 HTTP healthcheck は使えない。起動は即時で、実疎通は各アプリの
+    # /readyz（NATS 再接続付き）と smoke.sh で確認する。
+
+  auth:
+    build: ../services/auth
+    env_file: ../.env
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports: ["8081:8081"]
+
+  api:
+    build: ../services/api
+    env_file: ../.env
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+    ports: ["8082:8082"]
+
+  worldstate:
+    build: ../services/worldstate
+    env_file: ../.env
+    depends_on:
+      nats: { condition: service_started }
+      postgres: { condition: service_healthy }
+    ports: ["8083:8083"]
+
+  llm-worker:
+    build: ../services/llm-worker
+    env_file: ../.env
+    depends_on:
+      nats: { condition: service_started }
+    # health 用 HTTP（smoke で確認）。既定 8084。
+    ports: ["8084:8084"]
+
+volumes:
+  pgdata:

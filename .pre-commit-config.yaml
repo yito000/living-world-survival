@@ -1,0 +1,51 @@
+# pre-commit（03B 2章）: コミット時の整形/Lint。
+# 導入: pip install pre-commit && pre-commit install
+minimum_pre_commit_version: "3.5.0"
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '^unity/SurvivalWorld/Assets/Generated/'
+      - id: end-of-file-fixer
+        exclude: '^unity/SurvivalWorld/Assets/Generated/'
+      - id: check-merge-conflict
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+        # 生成物やテンプレ的なYAMLは対象外
+        exclude: '^(unity/|infra/nats/)'
+      - id: mixed-line-ending
+        # .gitattributes に合わせ LF を強制（.ps1 は除外）
+        args: [--fix=lf]
+        exclude: '\.ps1$'
+
+  # Python: ruff（lint + format）
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: '^(services/(worldstate|llm-worker)/|assets-pipeline/)'
+      - id: ruff-format
+        files: '^(services/(worldstate|llm-worker)/|assets-pipeline/)'
+
+  # Go: gofmt / go vet（ローカルフック）
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: bash -c 'test -z "$(gofmt -l services/auth services/api)"'
+        language: system
+        files: '^services/(auth|api)/.*\.go$'
+        pass_filenames: false
+
+  # proto: buf lint
+  - repo: local
+    hooks:
+      - id: buf-lint
+        name: buf lint
+        entry: bash -c 'command -v buf >/dev/null 2>&1 && buf lint proto || echo "buf not installed - skip"'
+        language: system
+        files: '^proto/.*\.proto$'
+        pass_filenames: false

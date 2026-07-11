@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS inbox_dedup;
+DROP TABLE IF EXISTS outbox_messages;
+DROP TABLE IF EXISTS purchase_transactions;
+DROP TABLE IF EXISTS currency_ledger;
+DROP TABLE IF EXISTS inventory_entries;
+DROP TABLE IF EXISTS inventories;
+DROP TABLE IF EXISTS item_instances;
+DROP TABLE IF EXISTS domain_events;
+DROP TABLE IF EXISTS world_snapshots;
+DROP TABLE IF EXISTS characters;
+DROP TABLE IF EXISTS worlds;

@@ -1,0 +1,50 @@
+name: ci
+on: [push, pull_request]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: survival
+          POSTGRES_PASSWORD: survival
+          POSTGRES_DB: survival
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U survival"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://survival:survival@localhost:5432/survival?sslmode=disable
+      NATS_URL: nats://localhost:4222
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install uv
+        run: pip install uv
+
+      - name: install buf
+        uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      # ローカルと同じ make target を呼ぶ（Blender 未導入のため assets は自動 skip）。
+      - name: proto
+        run: make proto
+      - name: lint
+        run: make lint
+      - name: test
+        run: make test
+      - name: assets
+        run: make assets

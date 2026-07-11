@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package survival.v1;
+
+import "survival/v1/common.proto";
+
+// World Event Internal gRPC（MVP 10 / 14.2）。
+
+service WorldEventService {
+  // 承認された提案を event_instance として登録。
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  // 状態遷移（expected_state → new_state の条件更新）。
+  rpc UpdateState(UpdateStateRequest) returns (UpdateStateResponse);
+}
+
+enum WorldEventState {
+  WORLD_EVENT_STATE_UNSPECIFIED = 0;
+  WORLD_EVENT_STATE_PROPOSED = 1;
+  WORLD_EVENT_STATE_ACTIVE = 2;
+  WORLD_EVENT_STATE_COMPLETED = 3;
+  WORLD_EVENT_STATE_REJECTED = 4;
+}
+
+message RegisterRequest {
+  string proposal_id = 1;
+  string template_id = 2;
+  string world_id = 3;
+  string region_id = 4;
+  bytes params = 5; // JSON エンコード済み
+}
+
+message RegisterResponse {
+  string event_instance_id = 1;
+}
+
+message UpdateStateRequest {
+  string event_instance_id = 1;
+  WorldEventState expected_state = 2;
+  WorldEventState new_state = 3;
+  bytes stats = 4; // JSON エンコード済み
+}
+
+message UpdateStateResponse {
+  ResultStatus status = 1;
+}

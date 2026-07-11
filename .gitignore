@@ -1,0 +1,42 @@
+# --- 環境変数（実値） ---
+.env
+*.env.local
+
+# --- Go ---
+coverage.out
+coverage.html
+*.test
+# Go build cache is kept in ~/.cache (03B 5.5)
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+*.egg-info/
+.uv/
+
+# --- proto 生成物のうち Go/Python 側 ---
+# 生成コードはコミットしてドリフト検査する方針のため無視しない。
+# （unity/SurvivalWorld/Assets/Generated も同様にコミット対象）
+
+# --- Blender / assets ---
+build/
+*.blend1
+
+# --- Docker / infra ---
+# pgdata は named volume のため対象外
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- 一時 PowerShell 検証ファイル（ルート直下の暫定物） ---
+/test.ps1
+/test2.ps1

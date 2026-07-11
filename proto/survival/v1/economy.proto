@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package survival.v1;
+
+import "survival/v1/common.proto";
+
+// Economy Internal gRPC（MVP 12.2 / 14.2）。
+// 永続 Writer は常に API。DS は結果を Runtime へ反映するだけ（単一 Writer 原則）。
+
+service EconomyService {
+  // 購入を単一 Tx で確定（idempotency_key で冪等）。
+  rpc CommitPurchase(CommitPurchaseRequest) returns (CommitPurchaseResponse);
+  // 売却を単一 Tx で確定。
+  rpc CommitSale(CommitSaleRequest) returns (CommitSaleResponse);
+}
+
+enum PurchaseStatus {
+  PURCHASE_STATUS_UNSPECIFIED = 0;
+  PURCHASE_STATUS_COMMITTED = 1;
+  PURCHASE_STATUS_DUPLICATE = 2;
+  PURCHASE_STATUS_OUT_OF_STOCK = 3;
+  PURCHASE_STATUS_INSUFFICIENT_FUNDS = 4;
+  PURCHASE_STATUS_REJECTED = 5;
+}
+
+message CommitPurchaseRequest {
+  string idempotency_key = 1;
+  string buyer_instance_id = 2;
+  string stock_entry_id = 3;
+  string purchaser_id = 4;
+  int64 inventory_version = 5;
+}
+
+message CommitPurchaseResponse {
+  PurchaseStatus status = 1;
+  repeated ItemRef granted_items = 2;
+  repeated string item_instance_ids = 3;
+  int64 new_persisted_inventory_version = 4;
+  Money charged = 5;
+}
+
+message CommitSaleRequest {
+  string idempotency_key = 1;
+  string buyer_instance_id = 2;
+  string seller_id = 3;
+  repeated ItemRef items = 4;
+}
+
+message CommitSaleResponse {
+  ResultStatus status = 1;
+  Money proceeds = 2;
+  int64 new_persisted_inventory_version = 3;
+}

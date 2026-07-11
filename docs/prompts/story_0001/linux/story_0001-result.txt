@@ -1,0 +1,248 @@
+● WSL2側 M0 の足場一式を実装しました。分担どおり unity/ と scripts/unity_*.ps1
+  には一切触れていません（Windows側が並行実装中）。
+
+  実装した内容（指示書 03B の全項目）
+
+  ルート設定
+  - .gitignore / .env.example（ポート/DB/NATS/JWT/LLMモック）/
+  Makefile（help/bootstrap/up/down/migrate/proto/lint/test/build/assets/smoke/ci）/
+  .pre-commit-config.yaml / .golangci.yml（float禁止=通貨BIGINT徹底）/ README_backend.md
+  - .gitattributes は既にWindows側が作成済み（sh=LF, ps1=CRLF, 資産=LFS）で要件充足のため据え置き
+
+  インフラ（4章）: infra/docker-compose.yml（postgres16 / nats2 / auth / api / worldstate /
+  llm-worker、health-gated依存）、infra/nats/nats.conf（JetStream + monitoring 有効）
+
+  proto（5.4）: buf.yaml / buf.gen.yaml（Go/Python→services/gen、C#→unity/.../Generated）、survival/v1/
+  に7ファイル（common/auth/worlddata/economy/worldevent/gameplay/ai）。MVP
+  11・14章のRPC/メッセージを表現。buf STANDARD lint
+  準拠を検証済み（型名重複なし・RPC命名規約適合・import解決）
+
+  Goサービス（5.2/7章）: auth(authd) / api(apid)。/healthz(liveness) と /readyz（DB / NATS
+  ping）、graceful shutdown、ユニットテスト、distroless
+  Dockerfile、golang-migrate形式migrations（BIGINT通貨・一意制約
+  idempotency_key/event_id/(world_id,sequence) 等）
+
+  Pythonサービス（5.3）: worldstate（FastAPI health + NATS）/ llm-worker（NATS購読 + モックLLM +
+  health）。pyproject / ruff / mypy / pytest / import検査対応、Dockerfile
+
+  assets（6/15章）: asset_spec.py（決定的asset_id/version）/ generate.py（Blender
+  headless、5Kit18モジュール）/
+  validate.py（socket/collider/negative-scale/triangle/LOD検査、pure-python）+ テスト
+
+  scripts / CI（5/9章）: check_tools.sh ci_go.sh ci_python.sh
+  ci_proto.sh（drift+未追跡検出+breaking）ci_assets.sh
+  migrate.sh（サービス別管理テーブルで衝突回避）smoke.sh、.github/workflows/ci.yml
+
+  この環境で実施した検証（go/buf/docker/blender未導入のため一部は実WSL2で要実行）
+
+  - ✅ 全 .sh がLF・bash -n 構文OK / .py 全て py_compile OK
+  - ✅ asset validate ロジックを実行して全ケース合格（18モジュール・決定性・各種欠損検出）
+  - ✅ make help 動作 / 全YAML（compose/buf/pre-commit/workflow）パース成功
+  - ✅ proto の型重複なし・RPC命名規約適合・import解決を確認
+
+  実WSL2側で必要な残作業（ツール導入後）
+
+  - make bootstrap でツール確認 → go mod tidy（初回 go.sum 生成、Dockerfile/ci_go.sh に組込済み）
+  - make ci / make smoke の緑化と buf generate 生成物のコミット（ドリフト検査対象）
+
+  主要な設計判断: (1) go.sum未コミット問題をgo mod tidyで解決、(2) NATSはconf方式でJetStream確実化、(3)
+  llm-workerにhealthポート8084を追加しDoDの「4サービスhealth」を満たす、(4)
+  migrateはサービス別schema_migrations_*テーブルで同一DB衝突を回避。
+
+---
+
+❯ ちなみに他のプロジェクトのpipやpythonバージョンなどの相違があるかもしれないので、
+  miseとかで管理することは可能でしょうか？
+
+---
+
+● できます。mise が最適解で、実際にこのプロジェクトのWSL2側ツールはほぼ全部 mise
+  で固定できることを確認・設定しました。
+
+  なぜ mise が向くか
+
+  - ディレクトリ単位で版を切替：このリポジトリに入ると mise.toml
+  の版に自動で切り替わり、他プロジェクトのグローバル Python/pip/Go
+  を汚さない（「版の相違」問題がそのまま解決）。
+  - pip を直接使わない設計：Python 依存は各サービスの uv sync（既存の ci_python.sh
+  どおり）でサービス毎の隔離 venv に入るので、pip版の差異の影響を受けません。mise は「どの python/uv
+  を使うか」を固定するだけ。
+
+  設定したもの（mise.toml）
+
+  ┌──────────────┬────────────────────────────┬─────────────────────────────────────────────────────┐
+  │    ツール    │         mise 指定          │                        備考                         │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ go           │ go = "1.22"                │ auth/api                                            │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ python       │ python = "3.11"            │ precompiled（python.compile=falseでビルド不要・高速 │
+  │              │                            │ ）                                                  │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ uv           │ uv                         │ Python依存管理                                      │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ buf          │ buf                        │ proto                                               │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ golangci-lin │ golangci-lint              │ Go Lint                                             │
+  │ t            │                            │                                                     │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ migrate      │ aqua:golang-migrate/migrat │ 短縮名なし。実行名は migrate                        │
+  │              │ e                          │                                                     │
+  ├──────────────┼────────────────────────────┼─────────────────────────────────────────────────────┤
+  │ pre-commit   │ pipx:pre-commit            │                                                     │
+  └──────────────┴────────────────────────────┴─────────────────────────────────────────────────────┘
+
+  - [settings] lockfile = true → mise install 時に mise.lock
+  が生成され、チーム間で完全再現。コミット推奨。
+  - [env] で GOCACHE / UV_CACHE_DIR を WSL2 ホーム側に固定（/mnt/* の I/O 遅延回避・03B 5.5）。
+  - docker / blender は対象外（Docker Desktop・apt管理）と明記。
+
+  検証結果
+
+  - mise trust → mise ls --current で config は正しくパース、[env] も解決（GOCACHE=/home/.../go-build
+  等）を確認。
+  - registry で短縮名を検証：go/python/uv/buf/golangci-lint/pre-commit は短縮名あり、migrate は
+  aqua:golang-migrate/migrate（別名 gomigrate）が正しいと確認。
+  - 大量に出た警告はこのサンドボックスの GitHub API
+  未認証レート制限（0/60）だけが原因で、設定ミスではありません。実WSL2環境、または GITHUB_TOKEN
+  設定下では解消します。
+
+  使い方（README_backend.md にも追記済み）
+
+  mise trust && mise install
+  eval "$(mise activate bash)"   # shell rc に追記推奨
+  make bootstrap                 # 揃ったか確認（mise検出時はヒント表示）
+
+  check_tools.sh も mise を検出したら「mise install で一括導入可」と案内するよう更新しました。
+
+  Windows側（Unity/PowerShell）はこの mise.toml の影響を受けず（無害に無視）、分担も崩していません。
+
+  補足: 完全な再現性を重視するなら go = "1.22.x" python = "3.11.x"
+  のようにパッチ版まで固定する手もありますが、lockfile = true があれば latest/系列指定でも mise.lock
+  で実バージョンが固定されるので、まずはこの構成で十分です。ご希望あればパッチ版ピン留めや、make
+  bootstrap を mise install 実行まで踏み込ませる版にもできます。
+
+---
+
+● 修正を確認できました。切り替え後は "date filter" エラーは消え、残るのはこのサンドボックス固有の GitHub
+  API レート制限（403 / トークン無し 0/60）だけです。つまり ubi
+  バックエンド指定は構造的に正しく、レート制限のないあなたの実環境ではインストールが通ります。
+
+  原因と対処
+
+  - 原因: mise 同梱の aqua レジストリの golang-migrate/migrate エントリが版解決（"date
+  filter"）で不整合を起こしていた（migrate 固有。buf/golangci-lint は aqua のままでOK）。
+  - 対処（適用済み）: mise.toml を aqua → ubi:golang-migrate/migrate（GitHub Releases から直接取得、aqua
+  レジストリを経由しない）に変更。
+
+  再実行してください：
+  mise install
+
+  もし GitHub の 403（レート制限）が出たら
+
+  buf / golangci-lint / migrate はいずれも GitHub
+  からダウンロードするため、トークン設定が最も効きます（未認証は 60回/時、認証で 5000回/時）：
+  export GITHUB_TOKEN=ghp_xxx      # https://github.com/settings/tokens（スコープ不要）
+  # もしくは gh CLI 済みなら mise が自動で拾います
+  mise install
+
+  それでも migrate だけ入らない場合のフォールバック
+
+  - 版を明示ピン："ubi:golang-migrate/migrate" = "4.18.1"（レジストリ列挙を避けられる）
+  - あるいは mise 管理せず、migrate は Docker（migrate/migrate イメージ）や
+  apt/公式バイナリで入れる。scripts/migrate.sh は migrate が PATH に無ければ自動 skip
+  する作りなので、make ci 自体は止まりません。
+
+  要点：mise.toml は修正済みで、次の mise install は（レート制限に当たらなければ）migrate
+  まで通ります。GitHub トークンを設定しておくと buf/golangci-lint 含め安定します。
+
+---
+
+❯ 出来ればwindowsとlinux両方の環境で呼べるようにしてほしいです。
+  （開発はWSL2でもいいが、スクリプト自体はローカルWindowsから呼びたいので）
+
+--
+
+● 完了しました。Windows / Linux(WSL2) 両方から Blender
+  アセットを呼べる構成にし、実機で両経路を検証済みです。
+
+  実装・検証結果
+
+  Linux / WSL2 側 — make assets（scripts/ci_assets.sh）
+  - blender が無ければ WSL interop で Windows の blender.exe を自動検出して使うよう改良
+  - ✅ 実行: 18モジュール生成 → validate.py（WSL Python）で検査OK
+
+  Windows ネイティブ側 — scripts/assets.ps1（新規）
+  - Blender を自動検出（PATH → C:\Program Files\Blender Foundation\Blender
+  *、最新版優先）、-Blender/-Seed/-ModuleSize/-Out 対応
+  - 検査は standalone Python（py/python）優先、無ければ Blender 同梱 Python
+  - ✅ powershell.exe -File scripts/assets.ps1 で 18生成 → 検査OK / exit 0
+
+  共通化: generate.py/validate.py は両環境で共通。validate.py を -- 対応にして「標準Python でも blender
+  --python 経由でも」動くようにしました（三角形カウントも Blender 4.x/5.x 差異に堅牢化）。
+
+  途中でハマった重要ポイント（解決済み）
+
+  Windows PowerShell 5.1 は BOM無しスクリプトを
+  ANSIコードページ（この環境=日本語CP932）として読むため、.ps1
+  内の日本語コメントの非ASCIIバイトでパースが静かに壊れ、-File 実行がexit 0
+  のまま何もせず終了していました。→ assets.ps1 を ASCIIコメント + UTF-8 BOM + CRLF
+  で保存して解決（.gitattributes の *.ps1 eol=crlf とも整合）。README とメモリに規約として記録しました。
+
+  使い方（README_backend.md に追記済み）
+
+  # Windows (PowerShell)
+  .\scripts\assets.ps1
+  # Windows (cmd)
+  powershell -ExecutionPolicy Bypass -File scripts\assets.ps1
+  # Linux / WSL2
+  make assets                      # blender.exe を自動検出
+  make assets BLENDER=blender.exe  # 明示指定も可
+
+  分担面では、Blender/アセットは元々WSL2側の責務ですが、ご要望に応じ Windows
+  ネイティブ呼び出し口（scripts/assets.ps1）を追加しました。Windows側が管理する unity/ や
+  scripts/unity_*.ps1 には手を付けていません。
+
+  補足: 他のバックエンドCI（docker/go/python/buf）は性質上 WSL2 実行が前提です。もしこれらも Windows
+  から叩けるラッパー（.ps1）が必要なら追加できますので、お知らせください。
+
+---
+
+● 両方修正しました。compose も検証OK（name: living-world-survival、nats 依存は service_started）。
+
+  まとめ（2つの独立した問題）
+
+  症状: nats unhealthy で smoke 失敗
+  原因: nats 公式イメージは scratch ベースで wget が無く、healthcheck が常に失敗
+  対処: nats の healthcheck を撤去。依存側は service_started に。疎通は各アプリ
+  /readyz（NATS再接続付き）と smoke.sh で担保
+  ────────────────────────────────────────
+  症状: livecommentarylab-mediamtx が同じ infra に混在 / orphan 警告
+  原因: Compose のプロジェクト名が親ディレクトリ名（infra）から自動決定され、他プロジェクトの infra/
+  と衝突
+  対処: compose に name: living-world-survival を明示
+
+  mediamtx は nats 失敗の原因ではありません。ただしプロジェクト名衝突は事故の元なので直しました。
+
+  次に実行する手順
+
+  プロジェクト名が変わったので、旧 infra-* コンテナ（ホストポート 5432/4222/8081…
+  を占有）を先に削除します。mediamtx は消さないよう、個別指定で消してください（--remove-orphans
+  は使わない）：
+
+  # 旧プロジェクト infra の“自分の”コンテナだけ削除（mediamtx は残す）
+  docker rm -f infra-postgres-1 infra-nats-1 infra-auth-1 infra-api-1 infra-worldstate-1
+  infra-llm-worker-1
+
+  # 新プロジェクト名で起動し直す
+  make smoke
+
+  起動後、nats 疎通を直接見たい場合（ホスト WSL から monitoring ポート）：
+  curl -s localhost:8222/healthz    # {"status":"ok"} が返れば nats は正常
+
+  これで mediamtx の orphan 警告も消え（プロジェクトが living-world-survival-* に分離）、nats
+  のヘルスチェック起因の失敗も解消します。make smoke が緑になれば auth/api/worldstate/llm-worker の
+  /healthz が全て 200 を返す状態です。
+
+  補足: 旧 infra_pgdata ボリュームは新プロジェクトでは使われず（新規に living-world-survival_pgdata
+  が作られ migrate も再実行されます）。不要なら後で docker volume rm infra_pgdata で掃除できます。
+

@@ -1,0 +1,10 @@
+# buf モジュール設定（03B 5.4）
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

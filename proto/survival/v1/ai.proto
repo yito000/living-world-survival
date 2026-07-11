@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package survival.v1;
+
+// AI Decision / World Event Proposal（MVP 9/10, 付録B）。
+// NATS 経由（ai.decision.*, worldevent.*）でやり取りする message 群。
+
+// AI へ意思決定を要求（NATS: ai.decision.request）。
+message DecisionRequest {
+  string actor_id = 1;
+  string world_id = 2;
+  map<string, int64> state_versions = 3;
+  string reason = 4;
+}
+
+// 個々の行動ステップ。
+message ActionStep {
+  string action_template_id = 1;
+  map<string, string> params = 2;
+}
+
+// AI の意思決定結果（NATS: ai.decision.result.{server_id}, 付録B.1）。
+message ActionDecision {
+  string decision_id = 1;
+  string actor_id = 2;
+  int64 state_version = 3;
+  string template_id = 4;
+  repeated ActionStep steps = 5;
+  int64 created_at_unix_ms = 6;
+}
+
+// World Event 評価要求（NATS: worldevent.evaluation.request）。
+message EvaluationRequest {
+  string world_id = 1;
+  string reason = 2;
+}
+
+// World Event 提案（NATS: worldevent.proposal.{server_id}, 付録B.2）。
+message EventProposal {
+  string proposal_id = 1;
+  string template_id = 2;
+  string world_id = 3;
+  string region_id = 4;
+  bytes params = 5; // JSON エンコード済み
+  double score = 6;
+}

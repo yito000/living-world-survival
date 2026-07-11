@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package survival.v1;
+
+import "survival/v1/common.proto";
+
+// World 永続化・ActorState Internal gRPC（MVP 12 / 14.2）。
+// Dedicated Server ⇔ API 間で使用する。API が唯一の永続 Writer。
+
+service WorldDataService {
+  // 起動時ブートストラップ（Snapshot + Event tail）。
+  rpc LoadBootstrap(LoadBootstrapRequest) returns (LoadBootstrapResponse);
+  // Outbox からの Domain Event 追記（event_id で重複排除, sequence は API 採番）。
+  rpc AppendEvents(AppendEventsRequest) returns (AppendEventsResponse);
+  // Snapshot 保存（staging→checksum→active pointer 切替）。
+  rpc SaveSnapshot(SaveSnapshotRequest) returns (SaveSnapshotResponse);
+}
+
+service ActorStateService {
+  // Actor runtime state を永続化（DS 生成 → API 永続化）。
+  rpc Save(SaveRequest) returns (SaveResponse);
+}
+
+message LoadBootstrapRequest {
+  string world_id = 1;
+  string server_build = 2;
+}
+
+message LoadBootstrapResponse {
+  string snapshot_id = 1;
+  int64 sequence = 2;
+  bytes snapshot_payload = 3;    // JSONB payload
+  repeated DomainEvent event_tail = 4;
+}
+
+message AppendEventsRequest {
+  string server_id = 1;
+  repeated DomainEvent events = 2;
+}
+
+message AppendEventsResponse {
+  // event ごとの受理結果（OK / DUPLICATE / CONFLICT）。
+  repeated ResultStatus results = 1;
+}
+
+message SaveSnapshotRequest {
+  string world_id = 1;
+  int64 sequence = 2;
+  string checksum = 3;
+  bytes payload = 4;
+}
+
+message SaveSnapshotResponse {
+  string snapshot_id = 1;
+}
+
+message SaveRequest {
+  string actor_id = 1;
+  int64 version = 2;
+  bytes personal_state = 3;      // JSON エンコード済み
+  repeated InventoryEntry inventory_summary = 4;
+}
+
+message SaveResponse {
+  ResultStatus status = 1;
+}

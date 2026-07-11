@@ -1,0 +1,34 @@
+# WSL2 バックエンド側ツールチェーンの版固定（mise）。
+# 目的: 他プロジェクトと Go/Python/pip 版が衝突しないよう、この repo 専用に版を固定する。
+#       mise はディレクトリに入ると自動でこの版へ切り替える（グローバルを汚さない）。
+#
+# 使い方（WSL2）:
+#   mise trust            # このファイルを信頼（初回のみ）
+#   mise install          # 下記ツールを導入
+#   # PATH へ反映するには shell rc に  eval "$(mise activate bash)"  を追加
+#   # もしくは単発なら  mise exec -- <cmd>  /  mise run <task>
+#
+# 対象外: docker(Docker Desktop) と blender(apt/公式) は OS 側で管理する。
+#         Unity/PowerShell(Windows 側)はこの設定の影響を受けない（無害に無視される）。
+
+[tools]
+go = "1.22"                                 # auth/api
+python = "3.11"                             # worldstate/llm-worker/assets（precompiled）
+uv = "latest"                               # Python 依存管理（pip を直接使わない）
+buf = "latest"                              # proto lint/generate/breaking
+golangci-lint = "latest"                    # Go Lint
+# DB マイグレーション（実行名は migrate）。
+# aqua レジストリ版は版解決で "date filter" 不整合が出るため ubi（GitHub Releases 直取得）を使う。
+"ubi:golang-migrate/migrate" = "latest"
+"pipx:pre-commit" = "latest"                # コミット時整形/Lint
+
+[settings]
+# python は python-build-standalone のプリコンパイル版を使う（ビルド不要で高速・依存も不要）
+python.compile = false
+# 導入版を mise.lock に固定して再現性を上げる（mise install 時に生成。コミット推奨）
+lockfile = true
+
+[env]
+# ビルドキャッシュは WSL2 ホーム側へ（/mnt/c・/mnt/d の I/O 遅延を避ける — 03B 5.5）
+GOCACHE = "{{env.HOME}}/.cache/go-build"
+UV_CACHE_DIR = "{{env.HOME}}/.cache/uv"
