@@ -5,7 +5,9 @@ set -euo pipefail
 cmd="${1:-}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
-services=(services/auth services/api)
+# services/gen/go は生成 gRPC/protobuf スタブの module（2.1）。auth が replace で
+# 参照するため、ビルド対象に含めてスタブ自体の解決を保証する。
+services=(services/gen/go services/auth services/api)
 
 if ! command -v go >/dev/null 2>&1; then
   echo "go 未導入: Go サービスの CI をスキップします。"

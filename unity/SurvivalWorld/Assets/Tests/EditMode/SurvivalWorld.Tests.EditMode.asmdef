@@ -1,7 +1,12 @@
 {
     "name": "SurvivalWorld.Tests.EditMode",
     "rootNamespace": "SurvivalWorld.Tests",
-    "references": [],
+    "references": [
+        "SurvivalWorld.Runtime",
+        "SurvivalWorld.Generated",
+        "Unity.InputSystem",
+        "FishNet.Runtime"
+    ],
     "includePlatforms": [
         "Editor"
     ],

@@ -31,11 +31,16 @@ services:
     # /readyz（NATS 再接続付き）と smoke.sh で確認する。
 
   auth:
-    build: ../services/auth
+    # M1: auth は services/gen/go を replace 参照するため、コンテキストはリポジトリ直下。
+    build:
+      context: ..
+      dockerfile: services/auth/Dockerfile
     env_file: ../.env
     depends_on:
       postgres: { condition: service_healthy }
-    ports: ["8081:8081"]
+    # 8081: REST/health（Public）。9091: 内部 gRPC（DS⇔Auth 専用, BSD第11章）。
+    # dev では smoke/grpcurl 用に localhost へ公開する。
+    ports: ["8081:8081", "9091:9091"]
 
   api:
     build: ../services/api

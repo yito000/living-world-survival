@@ -51,3 +51,22 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "smoke.sh: 全サービス health OK"
+
+# --- M1: Auth/Matchmaking E2E 疎通（5.3） -----------------------------------
+# アカウント作成→ログイン→RegisterServer/Heartbeat→matchmaking join→
+# RedeemJoinTicket（単回消費: 1回目OK / 2回目 error）を Go スモークバイナリで確認する。
+# grpcurl 非依存（REST/gRPC を 1 バイナリで実行, 5.3 の但し書き）。
+echo "== smoke: Auth/Matchmaking E2E =="
+if ! command -v go >/dev/null 2>&1; then
+  echo "  go 未導入: Matchmaking E2E をスキップします。" >&2
+else
+  ( cd services/auth && AUTH_PORT="${AUTH_PORT}" AUTH_GRPC_PORT="${AUTH_GRPC_PORT:-9091}" \
+      go run ./cmd/mm-smoke )
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "smoke.sh: Auth/Matchmaking E2E が失敗しました（rc=$rc）。" >&2
+    echo "  ログ確認: make logs" >&2
+    exit 1
+  fi
+fi
+echo "smoke.sh: smoke OK"
