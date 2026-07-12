@@ -5,7 +5,8 @@
         "SurvivalWorld.Runtime",
         "SurvivalWorld.Generated",
         "Unity.InputSystem",
-        "FishNet.Runtime"
+        "FishNet.Runtime",
+        "UniTask"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

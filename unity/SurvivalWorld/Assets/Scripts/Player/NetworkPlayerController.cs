@@ -1,3 +1,4 @@
+using FishNet.Connection;
 using FishNet.Object;
 using Survival.V1;
 using UnityEngine;
@@ -24,6 +25,18 @@ namespace SurvivalWorld.Player
             {
                 inputReader = GetComponent<ThirdPersonInputReader>();
             }
+        }
+
+        public override void OnStartClient()
+        {
+            base.OnStartClient();
+            TryBindOwnerCamera();
+        }
+
+        public override void OnOwnershipClient(NetworkConnection prevOwner)
+        {
+            base.OnOwnershipClient(prevOwner);
+            TryBindOwnerCamera();
         }
 
         private void Update()
@@ -70,6 +83,20 @@ namespace SurvivalWorld.Player
             }
 
             transform.SetPositionAndRotation(position, rotation);
+        }
+
+        private void TryBindOwnerCamera()
+        {
+            if (!IsOwner || Camera.main == null)
+            {
+                return;
+            }
+
+            ThirdPersonCameraRig cameraRig = Camera.main.GetComponent<ThirdPersonCameraRig>();
+            if (cameraRig != null)
+            {
+                cameraRig.Target = transform;
+            }
         }
 
         private void ApplyMovement(InputCommand command, float deltaTime)

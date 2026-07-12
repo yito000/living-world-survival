@@ -294,7 +294,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: SurvivalWorld.Runtime::SurvivalWorld.Bootstrap.Bootstrapper
   config: {fileID: 11400000, guid: 855bb0e556bdcd644a961a847d7d448e, type: 2}
   sessionClient: {fileID: 406148251}
-  defaultCharacterId: dev-character
+  defaultCharacterId: dev-character-01
 --- !u!114 &406148250
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -310,6 +310,8 @@ MonoBehaviour:
   config: {fileID: 11400000, guid: 855bb0e556bdcd644a961a847d7d448e, type: 2}
   networkManager: {fileID: 406148256}
   authenticator: {fileID: 406148252}
+  playerPrefab: {fileID: 784794755977142087, guid: 7e1ce8f206426e644bcead97b3a07fd5, type: 3}
+  worldSceneName: World_MVP
 --- !u!114 &406148251
 MonoBehaviour:
   m_ObjectHideFlags: 0

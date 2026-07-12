@@ -507,7 +507,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 92d9ee1162d1b0f4cb170b30e513963b, type: 3}
   m_Name:
   m_EditorClassIdentifier: SurvivalWorld.Runtime::SurvivalWorld.Player.ThirdPersonInputReader
-  actionAsset: {fileID: 0}
+  actionAsset: {fileID: -944628639613478452, guid: ff703a5df9d594e49a960b5a52de6c8a, type: 3}
   actionMapName: Gameplay
   moveActionName: Move
   lookActionName: Look

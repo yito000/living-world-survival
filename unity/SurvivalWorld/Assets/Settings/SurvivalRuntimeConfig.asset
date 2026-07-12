@@ -22,3 +22,8 @@ MonoBehaviour:
   tickMilliseconds: 50
   heartbeatSeconds: 5
   joinTicketPublicKey: 
+  devLocalMode: 1
+  autoStartLocalServerInEditor: 1
+  autoConnectLocalClientInEditor: 1
+  devAccountId: dev-account-01
+  devCharacterId: dev-character-01

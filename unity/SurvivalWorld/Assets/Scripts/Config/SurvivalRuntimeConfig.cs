@@ -22,6 +22,13 @@ namespace SurvivalWorld.Config
         [TextArea(3, 6)]
         [SerializeField] private string joinTicketPublicKey = string.Empty;
 
+        [Header("Dev Local Mode")]
+        [SerializeField] private bool devLocalMode;
+        [SerializeField] private bool autoStartLocalServerInEditor = true;
+        [SerializeField] private bool autoConnectLocalClientInEditor = true;
+        [SerializeField] private string devAccountId = "dev-account-01";
+        [SerializeField] private string devCharacterId = "dev-character-01";
+
         public string AuthBaseUrl => authBaseUrl;
         public string BuildId => buildId;
         public string ServerId => serverId;
@@ -32,5 +39,10 @@ namespace SurvivalWorld.Config
         public int TickMilliseconds => tickMilliseconds;
         public float HeartbeatSeconds => Mathf.Max(1f, heartbeatSeconds);
         public string JoinTicketPublicKey => joinTicketPublicKey;
+        public bool DevLocalMode => devLocalMode;
+        public bool AutoStartLocalServerInEditor => autoStartLocalServerInEditor;
+        public bool AutoConnectLocalClientInEditor => autoConnectLocalClientInEditor;
+        public string DevAccountId => devAccountId;
+        public string DevCharacterId => devCharacterId;
     }
 }

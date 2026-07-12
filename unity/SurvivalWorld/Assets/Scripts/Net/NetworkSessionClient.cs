@@ -18,6 +18,11 @@ namespace SurvivalWorld.Net
 
         public async UniTask ConnectWithJoinTicketAsync(string serverEndpoint, string joinTicket, CancellationToken cancellationToken)
         {
+            if (authenticatedCompletion != null)
+            {
+                throw new InvalidOperationException("A FishNet connection attempt is already in progress.");
+            }
+
             if (networkManager == null)
             {
                 networkManager = FindFirstObjectByType<NetworkManager>();
@@ -38,22 +43,29 @@ namespace SurvivalWorld.Net
             networkManager.ClientManager.OnClientConnectionState += OnClientConnectionState;
             networkManager.ClientManager.OnAuthenticated += OnAuthenticated;
 
-            bool started = networkManager.ClientManager.StartConnection(endpoint.Host, endpoint.Port);
-            if (!started)
+            try
+            {
+                bool started = networkManager.ClientManager.StartConnection(endpoint.Host, endpoint.Port);
+                if (!started)
+                {
+                    throw new InvalidOperationException("FishNet client failed to start.");
+                }
+
+                using (cancellationToken.Register(() => authenticatedCompletion.TrySetCanceled(cancellationToken)))
+                {
+                    await authenticatedCompletion.Task;
+                }
+
+                if (!string.IsNullOrWhiteSpace(worldSceneName) && SceneManager.GetActiveScene().name != worldSceneName)
+                {
+                    await SceneManager.LoadSceneAsync(worldSceneName).ToUniTask(cancellationToken: cancellationToken);
+                }
+            }
+            finally
             {
                 CleanupHandlers();
-                throw new InvalidOperationException("FishNet client failed to start.");
-            }
-
-            using (cancellationToken.Register(() => authenticatedCompletion.TrySetCanceled(cancellationToken)))
-            {
-                await authenticatedCompletion.Task;
-            }
-
-            CleanupHandlers();
-            if (!string.IsNullOrWhiteSpace(worldSceneName) && SceneManager.GetActiveScene().name != worldSceneName)
-            {
-                await SceneManager.LoadSceneAsync(worldSceneName).ToUniTask(cancellationToken: cancellationToken);
+                pendingJoinTicket = null;
+                authenticatedCompletion = null;
             }
         }
 
@@ -66,7 +78,6 @@ namespace SurvivalWorld.Net
             else if (args.ConnectionState == LocalConnectionState.Stopped)
             {
                 authenticatedCompletion?.TrySetException(new InvalidOperationException("FishNet client disconnected before authentication."));
-                CleanupHandlers();
             }
         }
 

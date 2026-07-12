@@ -7,7 +7,7 @@ using UnityEngine.Networking;
 
 namespace SurvivalWorld.Auth
 {
-    public sealed class AuthClient
+    public sealed class AuthClient : IAuthClient
     {
         private readonly string baseUrl;
         private readonly ITokenStore tokenStore;

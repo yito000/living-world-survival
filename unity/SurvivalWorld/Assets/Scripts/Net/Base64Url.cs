@@ -6,6 +6,21 @@ namespace SurvivalWorld.Net
 {
     internal static class Base64Url
     {
+        public static string Encode(byte[] value)
+        {
+            if (value == null || value.Length == 0)
+            {
+                return string.Empty;
+            }
+
+            return Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        }
+
+        public static string EncodeUtf8(string value)
+        {
+            return Encode(Encoding.UTF8.GetBytes(value ?? string.Empty));
+        }
+
         public static byte[] Decode(string value)
         {
             if (string.IsNullOrEmpty(value))
