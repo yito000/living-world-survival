@@ -1,3 +1,5 @@
+using System;
+using System.Globalization;
 using FishNet.Connection;
 using FishNet.Object;
 using Survival.V1;
@@ -17,6 +19,9 @@ namespace SurvivalWorld.Player
 
         private CharacterController characterController;
         private float verticalVelocity;
+        private bool commandLineTestDrive;
+        private Vector2 commandLineTestMove;
+        private bool loggedServerMovement;
 
         private void Awake()
         {
@@ -25,6 +30,8 @@ namespace SurvivalWorld.Player
             {
                 inputReader = GetComponent<ThirdPersonInputReader>();
             }
+
+            ConfigureCommandLineTestDrive();
         }
 
         public override void OnStartClient()
@@ -48,7 +55,9 @@ namespace SurvivalWorld.Player
 
             float yaw = Camera.main == null ? transform.eulerAngles.y : Camera.main.transform.eulerAngles.y;
             long tick = TimeManager == null ? Time.frameCount : TimeManager.LocalTick;
-            InputCommand command = inputReader.ReadCurrentCommand(tick, yaw);
+            InputCommand command = commandLineTestDrive
+                ? inputReader.BuildCommand(commandLineTestMove, Vector2.zero, false, false, yaw, tick)
+                : inputReader.ReadCurrentCommand(tick, yaw);
             SubmitInputServerRpc(command.Tick, command.Sequence, command.Move.X, command.Move.Y, command.Move.Z, command.Look.X, command.Look.Y, command.Look.Z, command.Jump, command.Sprint);
 
             if (!IsServerStarted)
@@ -71,6 +80,12 @@ namespace SurvivalWorld.Player
             };
 
             ApplyMovement(command, Time.deltaTime);
+            if (!loggedServerMovement && (moveX * moveX + moveZ * moveZ) > 0.0001f)
+            {
+                loggedServerMovement = true;
+                Debug.Log($"Server received movement input for {name}: sequence={sequence}, position={transform.position}.");
+            }
+
             ApplyAuthoritativeStateObserversRpc(transform.position, transform.rotation);
         }
 
@@ -97,6 +112,48 @@ namespace SurvivalWorld.Player
             {
                 cameraRig.Target = transform;
             }
+        }
+
+        private void ConfigureCommandLineTestDrive()
+        {
+            if (!HasCommandLineArg("--sw-test-drive"))
+            {
+                return;
+            }
+
+            commandLineTestDrive = true;
+            float moveX = GetCommandLineFloat("--sw-test-move-x", 0f);
+            float moveZ = GetCommandLineFloat("--sw-test-move-z", 1f);
+            commandLineTestMove = new Vector2(moveX, moveZ);
+        }
+
+        private static bool HasCommandLineArg(string name)
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], name, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static float GetCommandLineFloat(string name, float fallback)
+        {
+            string[] args = Environment.GetCommandLineArgs();
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (string.Equals(args[i], name, StringComparison.Ordinal) &&
+                    float.TryParse(args[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out float value))
+                {
+                    return value;
+                }
+            }
+
+            return fallback;
         }
 
         private void ApplyMovement(InputCommand command, float deltaTime)

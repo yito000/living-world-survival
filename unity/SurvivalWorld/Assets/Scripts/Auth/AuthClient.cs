@@ -104,7 +104,14 @@ namespace SurvivalWorld.Auth
 
         private static async UniTask<string> SendAsync(UnityWebRequest request, CancellationToken cancellationToken)
         {
-            await request.SendWebRequest().ToUniTask(cancellationToken: cancellationToken);
+            try
+            {
+                await request.SendWebRequest().ToUniTask(cancellationToken: cancellationToken);
+            }
+            catch (UnityWebRequestException ex)
+            {
+                throw new AuthClientException(ex.ResponseCode, ex.Text ?? string.Empty);
+            }
 
             bool failed = request.result == UnityWebRequest.Result.ConnectionError ||
                           request.result == UnityWebRequest.Result.ProtocolError ||
@@ -130,7 +137,7 @@ namespace SurvivalWorld.Auth
         {
             if (string.IsNullOrWhiteSpace(value))
             {
-                return "http://127.0.0.1:8080";
+                return "http://127.0.0.1:8081";
             }
 
             return value.TrimEnd('/');

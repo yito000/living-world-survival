@@ -12,18 +12,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9bb49e0be73ad234cb8bfcaca18bc097, type: 3}
   m_Name: SurvivalRuntimeConfig
   m_EditorClassIdentifier: SurvivalWorld.Runtime::SurvivalWorld.Config.SurvivalRuntimeConfig
-  authBaseUrl: http://127.0.0.1:8080
+  authBaseUrl: http://127.0.0.1:8081
+  clientServerEndpointOverride:
   buildId: dev-local
-  serverId: local-ds-01
-  worldId: world-mvp
+  serverId: 00000000-0000-0000-0000-000000000101
+  worldId: 00000000-0000-0000-0000-000000000201
   serverEndpoint: 127.0.0.1:7770
   serverPort: 7770
   serverCapacity: 32
   tickMilliseconds: 50
   heartbeatSeconds: 5
-  joinTicketPublicKey: 
-  devLocalMode: 1
+  authGrpcEndpoint: 127.0.0.1:9091
+  authGrpcSharedSecret:
+  joinTicketPublicKey: IRp/SkYEWrMkt5UEtYBoCHgmrd+jbcXACcge3r7eBjo=
+  devLocalMode: 0
   autoStartLocalServerInEditor: 1
   autoConnectLocalClientInEditor: 1
   devAccountId: dev-account-01
-  devCharacterId: dev-character-01
+  devCharacterId: 00000000-0000-0000-0000-000000000301

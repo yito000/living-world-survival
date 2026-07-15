@@ -1,0 +1,38 @@
+# story_0001A 2-client smoke result (Windows Unity)
+
+Date: 2026-07-15
+Environment:
+- Backend: WSL2, Auth REST :8081, Auth gRPC :9091
+- Dedicated Server: WSL2 ext4, pid 11199, UDP 0.0.0.0:7770
+- Windows client build: unity/SurvivalWorld/Build/Client/survival.exe
+- Client runtime DLL: unity/SurvivalWorld/Build/Client/survival_Data/Managed/SurvivalWorld.Runtime.dll, LastWriteTime 2026/07/15 17:58:15
+
+Preflight:
+- Unity compile errors: 0
+- EditMode tests: 26/26 passed
+- PlayMode tests: 3/3 passed
+
+Client launch:
+- Client 1 log: D:\tmp\survival-client-1-20260715-175936.log
+- Client 2 log: D:\tmp\survival-client-2-20260715-175936.log
+- Both clients launched with --sw-auto-connect and --sw-test-drive.
+- Client 1 account: qa-client-1-20260715-175936@example.local
+- Client 2 account: qa-client-2-20260715-175936@example.local
+
+Observed client result:
+- Client 1: Matchmaking joined -> FishNet connection started -> join ticket broadcast sent -> FishNet client authenticated.
+- Client 2: Matchmaking joined -> FishNet connection started -> join ticket broadcast sent -> FishNet client authenticated.
+- Client-side ServerBootstrap gRPC native warning was eliminated after gating ServerBootstrap to server execution only.
+- Remaining client log note: d3d12 info queue warning only; not connection/auth failure.
+
+Observed DS result:
+- Join ticket accepted for connection 2, account c63c8f12-2f77-4b61-84e0-d6d5d0e6e88e.
+- Spawned player for connection 2 at (0.00, 1.00, 0.00).
+- Server received movement input for connection 2 player at sequence 1.
+- Join ticket accepted for connection 3, account 93e48915-e80a-40a2-8e91-bb83fdd80434.
+- Spawned player for connection 3 at (2.00, 1.00, 0.00).
+- Server received movement input for connection 3 player at sequence 1.
+
+Conclusion:
+- 2-client real-backend path passed: account create/login, matchmaking join, Join Ticket auth, FishNet client authentication, two authenticated player spawns, and server-side movement input receipt.
+- Test clients were stopped after verification. DS remained running.

@@ -67,5 +67,16 @@ namespace SurvivalWorld.Net
         public long issued_at_unix_ms;
         public long expires_at_unix_ms;
         public string nonce;
+
+        public string jti;
+        public string sub;
+        public string chr;
+        public string srv;
+        public string wld;
+        public string bld;
+        public long iat;
+        public long exp;
+        public long iat_ms;
+        public long exp_ms;
     }
 }

@@ -100,16 +100,39 @@ namespace SurvivalWorld.Net
 
             return new JoinTicketClaims
             {
-                TicketId = json.ticket_id ?? string.Empty,
-                AccountId = json.account_id ?? string.Empty,
-                CharacterId = json.character_id ?? string.Empty,
-                ServerId = json.server_id ?? string.Empty,
-                WorldId = json.world_id ?? string.Empty,
-                BuildId = json.build_id ?? string.Empty,
-                IssuedAtUnixMs = json.issued_at_unix_ms,
-                ExpiresAtUnixMs = json.expires_at_unix_ms,
+                TicketId = FirstNonEmpty(json.ticket_id, json.jti),
+                AccountId = FirstNonEmpty(json.account_id, json.sub),
+                CharacterId = FirstNonEmpty(json.character_id, json.chr),
+                ServerId = FirstNonEmpty(json.server_id, json.srv),
+                WorldId = FirstNonEmpty(json.world_id, json.wld),
+                BuildId = FirstNonEmpty(json.build_id, json.bld),
+                IssuedAtUnixMs = FirstPositive(json.issued_at_unix_ms, json.iat_ms, SecondsToMilliseconds(json.iat)),
+                ExpiresAtUnixMs = FirstPositive(json.expires_at_unix_ms, json.exp_ms, SecondsToMilliseconds(json.exp)),
                 Nonce = json.nonce ?? string.Empty
             };
+        }
+
+        private static string FirstNonEmpty(string primary, string fallback)
+        {
+            return !string.IsNullOrWhiteSpace(primary) ? primary : fallback ?? string.Empty;
+        }
+
+        private static long FirstPositive(params long[] values)
+        {
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] > 0)
+                {
+                    return values[i];
+                }
+            }
+
+            return 0;
+        }
+
+        private static long SecondsToMilliseconds(long seconds)
+        {
+            return seconds > 0 ? seconds * 1000L : 0;
         }
     }
 }

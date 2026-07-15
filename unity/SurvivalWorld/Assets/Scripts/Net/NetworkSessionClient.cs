@@ -38,6 +38,7 @@ namespace SurvivalWorld.Net
                 throw new ArgumentException("Invalid server endpoint: " + serverEndpoint, nameof(serverEndpoint));
             }
 
+            Debug.Log("Starting FishNet client connection to " + endpoint.Host + ":" + endpoint.Port + ".");
             pendingJoinTicket = joinTicket;
             authenticatedCompletion = new UniTaskCompletionSource();
             networkManager.ClientManager.OnClientConnectionState += OnClientConnectionState;
@@ -73,16 +74,29 @@ namespace SurvivalWorld.Net
         {
             if (args.ConnectionState == LocalConnectionState.Started && !string.IsNullOrWhiteSpace(pendingJoinTicket))
             {
-                networkManager.ClientManager.Broadcast(new JoinTicketBroadcast { Ticket = pendingJoinTicket });
+                SendJoinTicketAfterHandshakeAsync(destroyCancellationToken).Forget();
             }
             else if (args.ConnectionState == LocalConnectionState.Stopped)
             {
-                authenticatedCompletion?.TrySetException(new InvalidOperationException("FishNet client disconnected before authentication."));
+                authenticatedCompletion?.TrySetException(new InvalidOperationException("FishNet client disconnected before authentication. Check DS logs for join ticket rejection and verify the client endpoint is reachable over UDP."));
             }
+        }
+
+        private async UniTaskVoid SendJoinTicketAfterHandshakeAsync(CancellationToken cancellationToken)
+        {
+            await UniTask.Yield(PlayerLoopTiming.Update, cancellationToken);
+            if (string.IsNullOrWhiteSpace(pendingJoinTicket))
+            {
+                return;
+            }
+
+            Debug.Log("Sending join ticket broadcast to FishNet server.");
+            networkManager.ClientManager.Broadcast(new JoinTicketBroadcast { Ticket = pendingJoinTicket });
         }
 
         private void OnAuthenticated()
         {
+            Debug.Log("FishNet client authenticated.");
             authenticatedCompletion?.TrySetResult();
         }
 

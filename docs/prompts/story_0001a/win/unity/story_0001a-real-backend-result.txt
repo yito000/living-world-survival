@@ -1,0 +1,100 @@
+﻿Unity 実バックエンド疎通 修正結果レポート
+記録日: 2026-07-15
+対象: Windows/Unity 側（living-world-survival/unity/SurvivalWorld）
+
+概要:
+
+- Unity クライアントから実バックエンド経由で account/login -> matchmaking join -> FishNet DS 接続 -> Join Ticket 認証まで通る状態に修正した。
+- 最終確認では Unity Editor クライアントが 127.0.0.1:7770 の DS に接続し、FishNet 認証済み、World_MVP へ遷移した。
+- DS 側ログでも Join Ticket broadcast 受信と ticket accepted を確認済み。
+
+主な診断と修正:
+
+1. DS ビルドに Bootstrap.unity が含まれていなかった
+
+- 原因: BuildScript.ServerScenes が World_MVP.unity のみで、NetworkManager / ServerBootstrap / JoinTicketAuthenticator / Bootstrapper が入る Bootstrap.unity がサーバービルドに含まれていなかった。
+- 影響: DS は World_MVP に直接起動し、RegisterServer / FishNet listen / heartbeat が走らなかった。
+- 修正: ServerScenes を Bootstrap.unity -> World_MVP.unity の順に変更。
+- 結果: DS が Bootstrap 起点で起動し、RegisterServer、UDP 7770 listen、heartbeat が動作。
+
+2. Linux DS の Grpc.Core native library 名が不一致
+
+- 原因: Grpc.Core は libgrpc_csharp_ext.so をロードするが、ビルド成果物には libgrpc_csharp_ext.x64.so のみが入っていた。
+- 影響: gRPC channel 作成に失敗し、RegisterServer / Heartbeat / RedeemJoinTicket が実行できなかった。
+- 修正: server build 後処理で Plugins/x86_64/libgrpc_csharp_ext.x64.so を libgrpc_csharp_ext.so にコピー。
+- 補足: ServerBootstrap の gRPC channel 作成失敗ログに InnerException も出すよう改善。
+
+3. Editor と実 DS の port 競合を回避
+
+- 原因: Editor Play 時にも ServerBootstrap が server start し得る構成で、実 DS と UDP 7770 が競合した。
+- 修正: Editor の local server auto start は DevLocalMode のときだけに制限。実バックエンド構成では Editor は client としてのみ起動。
+
+4. 既存 dev account の 409 Conflict を処理
+
+- 症状: create account で email_taken が返ると接続フローが止まった。
+- 修正: AuthClient で UnityWebRequestException を AuthClientException に正規化し、Bootstrapper が 409 を無視して login に進めるようにした。
+
+5. Windows -> WSL2 DS の接続先を localhost に統一
+
+- 症状: clientServerEndpointOverride=192.168.11.2:7770 では FishNet client が Started まで進まず、join ticket broadcast が送信されなかった。
+- 調査: Windows -> WSL2 の UDP は 127.0.0.1 でも到達することを UDP probe で確認。
+- 修正: SurvivalRuntimeConfig.asset の clientServerEndpointOverride を空にし、matchmaking が返す 127.0.0.1:7770 を使用。
+- 結果: FishNet client が Started まで進み、join ticket broadcast を送信。
+
+6. 実バックエンド Join Ticket payload 形式に Unity verifier を対応
+
+- 症状: DS ログに Join ticket rejected: MalformedTicket Join ticket claims are missing.
+- 原因: Unity verifier は ticket_id/account_id/character_id/server_id/world_id/build_id/issued_at_unix_ms/expires_at_unix_ms を期待していたが、実バックエンドは JWT style の jti/sub/chr/srv/wld/bld/iat_ms/exp_ms を発行していた。
+- 修正: Base64Url.cs の JoinTicketClaimsJson に JWT style claim を追加し、JwsEd25519JoinTicketVerifier.ToClaims で snake_case と JWT style の両方を読めるようにした。
+- 結果: DS が Join Ticket を署名検証し、gRPC RedeemJoinTicket 後に accepted。
+
+主な変更ファイル:
+
+- unity/SurvivalWorld/Assets/Editor/BuildScript.cs
+- unity/SurvivalWorld/Assets/Settings/SurvivalRuntimeConfig.asset
+- unity/SurvivalWorld/Assets/Scripts/Config/SurvivalRuntimeConfig.cs
+- unity/SurvivalWorld/Assets/Scripts/Bootstrap/Bootstrapper.cs
+- unity/SurvivalWorld/Assets/Scripts/Auth/AuthClient.cs
+- unity/SurvivalWorld/Assets/Scripts/Net/NetworkSessionClient.cs
+- unity/SurvivalWorld/Assets/Scripts/Net/JoinTicketAuthenticator.cs
+- unity/SurvivalWorld/Assets/Scripts/Net/Base64Url.cs
+- unity/SurvivalWorld/Assets/Scripts/Net/JwsEd25519JoinTicketVerifier.cs
+- unity/SurvivalWorld/Assets/Scripts/Server/ServerBootstrap.cs
+- unity/SurvivalWorld/Assets/Scripts/Server/MatchmakingGateway.cs
+- unity/SurvivalWorld/Assets/packages.config
+- unity/SurvivalWorld/Assets/Scenes/Bootstrap.unity
+
+最終 Runtime Config の要点:
+
+- authBaseUrl: http://127.0.0.1:8081
+- authGrpcEndpoint: 127.0.0.1:9091
+- clientServerEndpointOverride: 空（matchmaking endpoint を使用）
+- serverEndpoint: 127.0.0.1:7770
+- serverId: 00000000-0000-0000-0000-000000000101
+- worldId: 00000000-0000-0000-0000-000000000201
+- buildId: dev-local
+- devLocalMode: false
+- joinTicketPublicKey: 実バックエンド公開鍵を設定済み
+
+検証結果:
+
+- Unity EditMode: 26 passed / 0 failed
+- Unity script validation: Base64Url.cs / JwsEd25519JoinTicketVerifier.cs とも errors 0
+- Unity server build: Editor 内から BuildScript.BuildLinuxServer() 実行成功
+- server build output: unity/SurvivalWorld/Build/Server/survival-server.x86_64
+- gRPC native library: libgrpc_csharp_ext.so と libgrpc_csharp_ext.x64.so の両方を同梱確認
+- 起動中 DS: Ubuntu-26.04 側 /tmp/codex-ds-20260715-1700 から起動、UDP 0.0.0.0:7770 listen
+- Unity Editor client smoke:
+  - Matchmaking joined: serverEndpoint=127.0.0.1:7770, clientEndpoint=127.0.0.1:7770
+  - Starting FishNet client connection to 127.0.0.1:7770
+  - Sending join ticket broadcast to FishNet server
+  - runtime state: clientStarted=True, auth=True, scene=World_MVP
+- DS log:
+  - Join ticket broadcast received
+  - Join ticket accepted for connection 0
+
+注意点 / 残作業:
+
+- scripts/unity_build_server.ps1 は同じ Unity project を Editor で開いている状態だと batchmode が exit 1 で即終了することがある。今回は Editor 内 execute_code から BuildScript.BuildLinuxServer() を実行して成功を確認した。CI/手元運用では Editor を閉じてから ps1 を実行するか、ロック検出ログを追加するとよい。
+- 現在の DS 起動状態は検証時点の一時実行であり、永続運用では Build/Server の成果物を正式な実行先へコピーして起動すること。
+- git status 上、Unity 由来の .vs / slnx / ProjectSettings/Packages など未追跡項目があるため、コミット前に採否を確認すること。

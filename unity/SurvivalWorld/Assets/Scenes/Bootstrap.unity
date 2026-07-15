@@ -294,7 +294,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: SurvivalWorld.Runtime::SurvivalWorld.Bootstrap.Bootstrapper
   config: {fileID: 11400000, guid: 855bb0e556bdcd644a961a847d7d448e, type: 2}
   sessionClient: {fileID: 406148251}
-  defaultCharacterId: dev-character-01
+  defaultCharacterId: 00000000-0000-0000-0000-000000000301
 --- !u!114 &406148250
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -338,7 +338,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a107a02ca66a3694dab88cce4af34a20, type: 3}
   m_Name:
   m_EditorClassIdentifier: SurvivalWorld.Runtime::SurvivalWorld.Net.JoinTicketAuthenticator
-  expectedServerId: local-ds-01
+  expectedServerId: 00000000-0000-0000-0000-000000000101
   expectedBuildId: dev-local
   joinTicketPublicKey:
 --- !u!114 &406148253
