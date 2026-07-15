@@ -5,7 +5,7 @@ document_id: "IMPL-M3-WIN-001"
 document_type: "implementation_instruction"
 version: "0.1"
 issued_at: "2026-07-12"
-status: "実装指示（M3 / Windows側）"
+status: "Complete（M3 / Windows側）"
 baseline: "Unity 6000.5.x / URP / FishNet / R3 / VContainer / UniTask"
 related_document: "06B_M3実装指示書_WSL2側_v0.1.md, 05A_M2実装指示書_Windows側_v0.1.md, 05B_M2実装指示書_WSL2側_v0.1.md, 04A_M1実装指示書_Windows側_v0.1.md, 03A_M0実装指示書_Windows側_v0.1.md, 03B_M0実装指示書_WSL2側_v0.1.md, 02_MVP詳細設計書_v0.2.2.md, 01_基本設計書_v0.2.1.md"
 language: "ja"
@@ -377,3 +377,12 @@ Job ライフサイクル:
 [R-FN] [FishNet docs](https://fish-networking.gitbook.io/docs)
 [R-R3] [Cysharp/R3](https://github.com/Cysharp/R3)
 [R-UT] [Cysharp/UniTask](https://github.com/Cysharp/UniTask)
+
+## Completion Notes
+**Completed**: 2026-07-16
+**Verdict**: COMPLETE WITH NOTES
+**Criteria**: 11/11 accepted for M3 Windows-side scope.
+**Deviations**: None blocking. Advisory: M3 server-side gameplay logic is covered by focused EditMode tests and real DS/client smoke evidence; no dedicated automated multi-client script was found in this repo.
+**Test Evidence**: `unity/SurvivalWorld/Assets/Tests/EditMode/M3SurvivalSystemsTests.cs`; Unity MCP EditMode 46 total / 45 passed / 1 ignored; Unity MCP PlayMode 4/4 passed; Windows Client build succeeded; Linux Dedicated Server build succeeded; real Unity DS on `Ubuntu-26.04` + Windows Client smoke passed with AppendEvents/outbox publication confirmed.
+**Code Review**: Skipped by review mode default `lean`.
+**Tech Debt**: None logged.

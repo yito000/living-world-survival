@@ -4,7 +4,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help bootstrap up down migrate proto lint test build assets smoke e2e-m2 ci clean logs
+.PHONY: help bootstrap up down stop-ds migrate proto lint test build assets smoke e2e-m2 ci clean logs
 
 help: ## ターゲット一覧
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -18,8 +18,11 @@ bootstrap: ## 必要ツールの存在確認
 up: ## ローカルインフラ起動(postgres/nats)
 	$(COMPOSE) up -d --wait postgres nats
 
-down: ## 停止
+down: stop-ds ## 停止（ローカルDSプロセス + コンテナ）
 	$(COMPOSE) down
+
+stop-ds: ## ローカルDS(survival-server.x86_64)を停止（Graceful→強制）
+	@bash scripts/stop_ds.sh
 
 migrate: ## DBマイグレーション適用
 	@bash scripts/migrate.sh up

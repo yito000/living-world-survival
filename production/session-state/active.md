@@ -32,3 +32,14 @@
 - Verification: Unity MCP EditMode 46 total / 45 passed / 1 ignored (existing optional WSL2 JSON test); Unity MCP PlayMode 4/4 passed; Unity Console compile errors cleared. scripts\\unity_test.ps1 and scripts\\unity_build_server.ps1 returned code 1 before test/build execution while another Unity Editor instance was running; logs contained no compile/build error body.
 - Blockers: Batch Unity server build not verified in this turn due existing Unity process/batch startup failure.
 - Next: /code-review unity/SurvivalWorld/Assets/Scripts/Shared unity/SurvivalWorld/Assets/Scripts/Server unity/SurvivalWorld/Assets/Scripts/Client unity/SurvivalWorld/Assets/Tests/EditMode/M3SurvivalSystemsTests.cs then /story-done docs/prompts/story_0003/win/unity/06A_M3実装指示書_Windows側_v0.1.md
+
+## Local Runtime Note - DS verification
+- Always use WSL distro `Ubuntu-26.04` for Linux Dedicated Server runtime checks. Do not use the default `Ubuntu` distro for DS verification because its glibc is too old for the current DS build.
+
+## Session Extract - /story-done 2026-07-16 Story_0003
+- Verdict: COMPLETE WITH NOTES
+- Story: docs/prompts/story_0003/win/unity/06A_M3実装指示書_Windows側_v0.1.md - M3 Windows DS gameplay logic and Client UI foundation
+- Acceptance evidence: Unity MCP EditMode 46 total / 45 passed / 1 ignored; Unity MCP PlayMode 4/4 passed; Windows Client build success; Linux Dedicated Server build success; backend Docker Go smoke passed; real Unity DS on Ubuntu-26.04 + Windows Client smoke passed; outbox unpublished=0/total=3.
+- Notes: DS runtime verification must use Ubuntu-26.04. No dedicated automated multi-client script was found; client and DS builds are current for manual multi-client E2E.
+- Tech debt logged: None
+- Next recommended: Sprint close-out QA sequence if both Windows and WSL2 M3 scopes are closed; otherwise complete the matching WSL2-side story-done.
