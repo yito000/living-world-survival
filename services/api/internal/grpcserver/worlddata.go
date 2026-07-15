@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log"
 	"strings"
@@ -49,11 +50,25 @@ func (s *WorldDataServer) LoadBootstrap(ctx context.Context, req *survivalv1.Loa
 		return nil, status.Error(codes.Internal, "load event tail failed")
 	}
 
+	// Master data (Item/Recipe/ResourceNodeDef) is delivered to the DS in the
+	// bootstrap so it caches the authoritative quantities/recipes (3.4 / 06A 0.4-2).
+	master, err := s.Store.LoadMasterData(ctx, worldID)
+	if err != nil {
+		log.Printf("grpc: LoadBootstrap master data: %v", err)
+		return nil, status.Error(codes.Internal, "load master data failed")
+	}
+	masterJSON, err := json.Marshal(master)
+	if err != nil {
+		log.Printf("grpc: LoadBootstrap marshal master: %v", err)
+		return nil, status.Error(codes.Internal, "marshal master data failed")
+	}
+
 	resp := &survivalv1.LoadBootstrapResponse{
 		SnapshotId:      boot.SnapshotID,
 		Sequence:        boot.Sequence,
 		SnapshotPayload: boot.Payload,
 		EventTail:       make([]*survivalv1.DomainEvent, 0, len(tail)),
+		MasterData:      masterJSON,
 	}
 	for _, t := range tail {
 		resp.EventTail = append(resp.EventTail, &survivalv1.DomainEvent{

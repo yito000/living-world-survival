@@ -79,8 +79,11 @@ type LoadBootstrapResponse struct {
 	Sequence        int64                  `protobuf:"varint,2,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	SnapshotPayload []byte                 `protobuf:"bytes,3,opt,name=snapshot_payload,json=snapshotPayload,proto3" json:"snapshot_payload,omitempty"` // JSONB payload
 	EventTail       []*DomainEvent         `protobuf:"bytes,4,rep,name=event_tail,json=eventTail,proto3" json:"event_tail,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// マスタデータ（ItemDefinition/Recipe/ResourceNodeDef）を JSON で同梱（M3 / 06B 3.4）。
+	// DS は MasterDataStore にキャッシュし数量・重量・レシピ・ツール要件の権威値に使う。
+	MasterData    []byte `protobuf:"bytes,5,opt,name=master_data,json=masterData,proto3" json:"master_data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LoadBootstrapResponse) Reset() {
@@ -137,6 +140,13 @@ func (x *LoadBootstrapResponse) GetSnapshotPayload() []byte {
 func (x *LoadBootstrapResponse) GetEventTail() []*DomainEvent {
 	if x != nil {
 		return x.EventTail
+	}
+	return nil
+}
+
+func (x *LoadBootstrapResponse) GetMasterData() []byte {
+	if x != nil {
+		return x.MasterData
 	}
 	return nil
 }
@@ -469,14 +479,16 @@ const file_survival_v1_worlddata_proto_rawDesc = "" +
 	"\x1bsurvival/v1/worlddata.proto\x12\vsurvival.v1\x1a\x18survival/v1/common.proto\"T\n" +
 	"\x14LoadBootstrapRequest\x12\x19\n" +
 	"\bworld_id\x18\x01 \x01(\tR\aworldId\x12!\n" +
-	"\fserver_build\x18\x02 \x01(\tR\vserverBuild\"\xb8\x01\n" +
+	"\fserver_build\x18\x02 \x01(\tR\vserverBuild\"\xd9\x01\n" +
 	"\x15LoadBootstrapResponse\x12\x1f\n" +
 	"\vsnapshot_id\x18\x01 \x01(\tR\n" +
 	"snapshotId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12)\n" +
 	"\x10snapshot_payload\x18\x03 \x01(\fR\x0fsnapshotPayload\x127\n" +
 	"\n" +
-	"event_tail\x18\x04 \x03(\v2\x18.survival.v1.DomainEventR\teventTail\"d\n" +
+	"event_tail\x18\x04 \x03(\v2\x18.survival.v1.DomainEventR\teventTail\x12\x1f\n" +
+	"\vmaster_data\x18\x05 \x01(\fR\n" +
+	"masterData\"d\n" +
 	"\x13AppendEventsRequest\x12\x1b\n" +
 	"\tserver_id\x18\x01 \x01(\tR\bserverId\x120\n" +
 	"\x06events\x18\x02 \x03(\v2\x18.survival.v1.DomainEventR\x06events\"K\n" +

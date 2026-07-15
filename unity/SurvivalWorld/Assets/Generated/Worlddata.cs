@@ -27,42 +27,43 @@ namespace Survival.V1 {
             "ChtzdXJ2aXZhbC92MS93b3JsZGRhdGEucHJvdG8SC3N1cnZpdmFsLnYxGhhz",
             "dXJ2aXZhbC92MS9jb21tb24ucHJvdG8iVAoUTG9hZEJvb3RzdHJhcFJlcXVl",
             "c3QSGQoId29ybGRfaWQYASABKAlSB3dvcmxkSWQSIQoMc2VydmVyX2J1aWxk",
-            "GAIgASgJUgtzZXJ2ZXJCdWlsZCK4AQoVTG9hZEJvb3RzdHJhcFJlc3BvbnNl",
+            "GAIgASgJUgtzZXJ2ZXJCdWlsZCLZAQoVTG9hZEJvb3RzdHJhcFJlc3BvbnNl",
             "Eh8KC3NuYXBzaG90X2lkGAEgASgJUgpzbmFwc2hvdElkEhoKCHNlcXVlbmNl",
             "GAIgASgDUghzZXF1ZW5jZRIpChBzbmFwc2hvdF9wYXlsb2FkGAMgASgMUg9z",
             "bmFwc2hvdFBheWxvYWQSNwoKZXZlbnRfdGFpbBgEIAMoCzIYLnN1cnZpdmFs",
-            "LnYxLkRvbWFpbkV2ZW50UglldmVudFRhaWwiZAoTQXBwZW5kRXZlbnRzUmVx",
-            "dWVzdBIbCglzZXJ2ZXJfaWQYASABKAlSCHNlcnZlcklkEjAKBmV2ZW50cxgC",
-            "IAMoCzIYLnN1cnZpdmFsLnYxLkRvbWFpbkV2ZW50UgZldmVudHMiSwoUQXBw",
-            "ZW5kRXZlbnRzUmVzcG9uc2USMwoHcmVzdWx0cxgBIAMoDjIZLnN1cnZpdmFs",
-            "LnYxLlJlc3VsdFN0YXR1c1IHcmVzdWx0cyKCAQoTU2F2ZVNuYXBzaG90UmVx",
-            "dWVzdBIZCgh3b3JsZF9pZBgBIAEoCVIHd29ybGRJZBIaCghzZXF1ZW5jZRgC",
-            "IAEoA1IIc2VxdWVuY2USGgoIY2hlY2tzdW0YAyABKAlSCGNoZWNrc3VtEhgK",
-            "B3BheWxvYWQYBCABKAxSB3BheWxvYWQiNwoUU2F2ZVNuYXBzaG90UmVzcG9u",
-            "c2USHwoLc25hcHNob3RfaWQYASABKAlSCnNuYXBzaG90SWQiswEKC1NhdmVS",
-            "ZXF1ZXN0EhkKCGFjdG9yX2lkGAEgASgJUgdhY3RvcklkEhgKB3ZlcnNpb24Y",
-            "AiABKANSB3ZlcnNpb24SJQoOcGVyc29uYWxfc3RhdGUYAyABKAxSDXBlcnNv",
-            "bmFsU3RhdGUSSAoRaW52ZW50b3J5X3N1bW1hcnkYBCADKAsyGy5zdXJ2aXZh",
-            "bC52MS5JbnZlbnRvcnlFbnRyeVIQaW52ZW50b3J5U3VtbWFyeSJBCgxTYXZl",
-            "UmVzcG9uc2USMQoGc3RhdHVzGAEgASgOMhkuc3Vydml2YWwudjEuUmVzdWx0",
-            "U3RhdHVzUgZzdGF0dXMylAIKEFdvcmxkRGF0YVNlcnZpY2USVgoNTG9hZEJv",
-            "b3RzdHJhcBIhLnN1cnZpdmFsLnYxLkxvYWRCb290c3RyYXBSZXF1ZXN0GiIu",
-            "c3Vydml2YWwudjEuTG9hZEJvb3RzdHJhcFJlc3BvbnNlElMKDEFwcGVuZEV2",
-            "ZW50cxIgLnN1cnZpdmFsLnYxLkFwcGVuZEV2ZW50c1JlcXVlc3QaIS5zdXJ2",
-            "aXZhbC52MS5BcHBlbmRFdmVudHNSZXNwb25zZRJTCgxTYXZlU25hcHNob3QS",
-            "IC5zdXJ2aXZhbC52MS5TYXZlU25hcHNob3RSZXF1ZXN0GiEuc3Vydml2YWwu",
-            "djEuU2F2ZVNuYXBzaG90UmVzcG9uc2UyUAoRQWN0b3JTdGF0ZVNlcnZpY2US",
-            "OwoEU2F2ZRIYLnN1cnZpdmFsLnYxLlNhdmVSZXF1ZXN0Ghkuc3Vydml2YWwu",
-            "djEuU2F2ZVJlc3BvbnNlQqwBCg9jb20uc3Vydml2YWwudjFCDldvcmxkZGF0",
-            "YVByb3RvUAFaPGxpdmluZy13b3JsZC1zdXJ2aXZhbC9zZXJ2aWNlcy9nZW4v",
-            "Z28vc3Vydml2YWwvdjE7c3Vydml2YWx2MaICA1NYWKoCC1N1cnZpdmFsLlYx",
-            "ygILU3Vydml2YWxcVjHiAhdTdXJ2aXZhbFxWMVxHUEJNZXRhZGF0YeoCDFN1",
-            "cnZpdmFsOjpWMWIGcHJvdG8z"));
+            "LnYxLkRvbWFpbkV2ZW50UglldmVudFRhaWwSHwoLbWFzdGVyX2RhdGEYBSAB",
+            "KAxSCm1hc3RlckRhdGEiZAoTQXBwZW5kRXZlbnRzUmVxdWVzdBIbCglzZXJ2",
+            "ZXJfaWQYASABKAlSCHNlcnZlcklkEjAKBmV2ZW50cxgCIAMoCzIYLnN1cnZp",
+            "dmFsLnYxLkRvbWFpbkV2ZW50UgZldmVudHMiSwoUQXBwZW5kRXZlbnRzUmVz",
+            "cG9uc2USMwoHcmVzdWx0cxgBIAMoDjIZLnN1cnZpdmFsLnYxLlJlc3VsdFN0",
+            "YXR1c1IHcmVzdWx0cyKCAQoTU2F2ZVNuYXBzaG90UmVxdWVzdBIZCgh3b3Js",
+            "ZF9pZBgBIAEoCVIHd29ybGRJZBIaCghzZXF1ZW5jZRgCIAEoA1IIc2VxdWVu",
+            "Y2USGgoIY2hlY2tzdW0YAyABKAlSCGNoZWNrc3VtEhgKB3BheWxvYWQYBCAB",
+            "KAxSB3BheWxvYWQiNwoUU2F2ZVNuYXBzaG90UmVzcG9uc2USHwoLc25hcHNo",
+            "b3RfaWQYASABKAlSCnNuYXBzaG90SWQiswEKC1NhdmVSZXF1ZXN0EhkKCGFj",
+            "dG9yX2lkGAEgASgJUgdhY3RvcklkEhgKB3ZlcnNpb24YAiABKANSB3ZlcnNp",
+            "b24SJQoOcGVyc29uYWxfc3RhdGUYAyABKAxSDXBlcnNvbmFsU3RhdGUSSAoR",
+            "aW52ZW50b3J5X3N1bW1hcnkYBCADKAsyGy5zdXJ2aXZhbC52MS5JbnZlbnRv",
+            "cnlFbnRyeVIQaW52ZW50b3J5U3VtbWFyeSJBCgxTYXZlUmVzcG9uc2USMQoG",
+            "c3RhdHVzGAEgASgOMhkuc3Vydml2YWwudjEuUmVzdWx0U3RhdHVzUgZzdGF0",
+            "dXMylAIKEFdvcmxkRGF0YVNlcnZpY2USVgoNTG9hZEJvb3RzdHJhcBIhLnN1",
+            "cnZpdmFsLnYxLkxvYWRCb290c3RyYXBSZXF1ZXN0GiIuc3Vydml2YWwudjEu",
+            "TG9hZEJvb3RzdHJhcFJlc3BvbnNlElMKDEFwcGVuZEV2ZW50cxIgLnN1cnZp",
+            "dmFsLnYxLkFwcGVuZEV2ZW50c1JlcXVlc3QaIS5zdXJ2aXZhbC52MS5BcHBl",
+            "bmRFdmVudHNSZXNwb25zZRJTCgxTYXZlU25hcHNob3QSIC5zdXJ2aXZhbC52",
+            "MS5TYXZlU25hcHNob3RSZXF1ZXN0GiEuc3Vydml2YWwudjEuU2F2ZVNuYXBz",
+            "aG90UmVzcG9uc2UyUAoRQWN0b3JTdGF0ZVNlcnZpY2USOwoEU2F2ZRIYLnN1",
+            "cnZpdmFsLnYxLlNhdmVSZXF1ZXN0Ghkuc3Vydml2YWwudjEuU2F2ZVJlc3Bv",
+            "bnNlQqwBCg9jb20uc3Vydml2YWwudjFCDldvcmxkZGF0YVByb3RvUAFaPGxp",
+            "dmluZy13b3JsZC1zdXJ2aXZhbC9zZXJ2aWNlcy9nZW4vZ28vc3Vydml2YWwv",
+            "djE7c3Vydml2YWx2MaICA1NYWKoCC1N1cnZpdmFsLlYxygILU3Vydml2YWxc",
+            "VjHiAhdTdXJ2aXZhbFxWMVxHUEJNZXRhZGF0YeoCDFN1cnZpdmFsOjpWMWIG",
+            "cHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Survival.V1.CommonReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
             new pbr::GeneratedClrTypeInfo(typeof(global::Survival.V1.LoadBootstrapRequest), global::Survival.V1.LoadBootstrapRequest.Parser, new[]{ "WorldId", "ServerBuild" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Survival.V1.LoadBootstrapResponse), global::Survival.V1.LoadBootstrapResponse.Parser, new[]{ "SnapshotId", "Sequence", "SnapshotPayload", "EventTail" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::Survival.V1.LoadBootstrapResponse), global::Survival.V1.LoadBootstrapResponse.Parser, new[]{ "SnapshotId", "Sequence", "SnapshotPayload", "EventTail", "MasterData" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Survival.V1.AppendEventsRequest), global::Survival.V1.AppendEventsRequest.Parser, new[]{ "ServerId", "Events" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Survival.V1.AppendEventsResponse), global::Survival.V1.AppendEventsResponse.Parser, new[]{ "Results" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Survival.V1.SaveSnapshotRequest), global::Survival.V1.SaveSnapshotRequest.Parser, new[]{ "WorldId", "Sequence", "Checksum", "Payload" }, null, null, null, null),
@@ -349,6 +350,7 @@ namespace Survival.V1 {
       sequence_ = other.sequence_;
       snapshotPayload_ = other.snapshotPayload_;
       eventTail_ = other.eventTail_.Clone();
+      masterData_ = other.masterData_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -408,6 +410,22 @@ namespace Survival.V1 {
       get { return eventTail_; }
     }
 
+    /// <summary>Field number for the "master_data" field.</summary>
+    public const int MasterDataFieldNumber = 5;
+    private pb::ByteString masterData_ = pb::ByteString.Empty;
+    /// <summary>
+    /// マスタデータ（ItemDefinition/Recipe/ResourceNodeDef）を JSON で同梱（M3 / 06B 3.4）。
+    /// DS は MasterDataStore にキャッシュし数量・重量・レシピ・ツール要件の権威値に使う。
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pb::ByteString MasterData {
+      get { return masterData_; }
+      set {
+        masterData_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -427,6 +445,7 @@ namespace Survival.V1 {
       if (Sequence != other.Sequence) return false;
       if (SnapshotPayload != other.SnapshotPayload) return false;
       if(!eventTail_.Equals(other.eventTail_)) return false;
+      if (MasterData != other.MasterData) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -438,6 +457,7 @@ namespace Survival.V1 {
       if (Sequence != 0L) hash ^= Sequence.GetHashCode();
       if (SnapshotPayload.Length != 0) hash ^= SnapshotPayload.GetHashCode();
       hash ^= eventTail_.GetHashCode();
+      if (MasterData.Length != 0) hash ^= MasterData.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -469,6 +489,10 @@ namespace Survival.V1 {
         output.WriteBytes(SnapshotPayload);
       }
       eventTail_.WriteTo(output, _repeated_eventTail_codec);
+      if (MasterData.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteBytes(MasterData);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -492,6 +516,10 @@ namespace Survival.V1 {
         output.WriteBytes(SnapshotPayload);
       }
       eventTail_.WriteTo(ref output, _repeated_eventTail_codec);
+      if (MasterData.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteBytes(MasterData);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -512,6 +540,9 @@ namespace Survival.V1 {
         size += 1 + pb::CodedOutputStream.ComputeBytesSize(SnapshotPayload);
       }
       size += eventTail_.CalculateSize(_repeated_eventTail_codec);
+      if (MasterData.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeBytesSize(MasterData);
+      }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -534,6 +565,9 @@ namespace Survival.V1 {
         SnapshotPayload = other.SnapshotPayload;
       }
       eventTail_.Add(other.eventTail_);
+      if (other.MasterData.Length != 0) {
+        MasterData = other.MasterData;
+      }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -569,6 +603,10 @@ namespace Survival.V1 {
             eventTail_.AddEntriesFrom(input, _repeated_eventTail_codec);
             break;
           }
+          case 42: {
+            MasterData = input.ReadBytes();
+            break;
+          }
         }
       }
     #endif
@@ -602,6 +640,10 @@ namespace Survival.V1 {
           }
           case 34: {
             eventTail_.AddEntriesFrom(ref input, _repeated_eventTail_codec);
+            break;
+          }
+          case 42: {
+            MasterData = input.ReadBytes();
             break;
           }
         }

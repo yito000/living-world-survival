@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from survival.v1 import common_pb2 as survival_dot_v1_dot_common__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bsurvival/v1/worlddata.proto\x12\x0bsurvival.v1\x1a\x18survival/v1/common.proto\"T\n\x14LoadBootstrapRequest\x12\x19\n\x08world_id\x18\x01 \x01(\tR\x07worldId\x12!\n\x0cserver_build\x18\x02 \x01(\tR\x0bserverBuild\"\xb8\x01\n\x15LoadBootstrapResponse\x12\x1f\n\x0bsnapshot_id\x18\x01 \x01(\tR\nsnapshotId\x12\x1a\n\x08sequence\x18\x02 \x01(\x03R\x08sequence\x12)\n\x10snapshot_payload\x18\x03 \x01(\x0cR\x0fsnapshotPayload\x12\x37\n\nevent_tail\x18\x04 \x03(\x0b\x32\x18.survival.v1.DomainEventR\teventTail\"d\n\x13\x41ppendEventsRequest\x12\x1b\n\tserver_id\x18\x01 \x01(\tR\x08serverId\x12\x30\n\x06\x65vents\x18\x02 \x03(\x0b\x32\x18.survival.v1.DomainEventR\x06\x65vents\"K\n\x14\x41ppendEventsResponse\x12\x33\n\x07results\x18\x01 \x03(\x0e\x32\x19.survival.v1.ResultStatusR\x07results\"\x82\x01\n\x13SaveSnapshotRequest\x12\x19\n\x08world_id\x18\x01 \x01(\tR\x07worldId\x12\x1a\n\x08sequence\x18\x02 \x01(\x03R\x08sequence\x12\x1a\n\x08\x63hecksum\x18\x03 \x01(\tR\x08\x63hecksum\x12\x18\n\x07payload\x18\x04 \x01(\x0cR\x07payload\"7\n\x14SaveSnapshotResponse\x12\x1f\n\x0bsnapshot_id\x18\x01 \x01(\tR\nsnapshotId\"\xb3\x01\n\x0bSaveRequest\x12\x19\n\x08\x61\x63tor_id\x18\x01 \x01(\tR\x07\x61\x63torId\x12\x18\n\x07version\x18\x02 \x01(\x03R\x07version\x12%\n\x0epersonal_state\x18\x03 \x01(\x0cR\rpersonalState\x12H\n\x11inventory_summary\x18\x04 \x03(\x0b\x32\x1b.survival.v1.InventoryEntryR\x10inventorySummary\"A\n\x0cSaveResponse\x12\x31\n\x06status\x18\x01 \x01(\x0e\x32\x19.survival.v1.ResultStatusR\x06status2\x94\x02\n\x10WorldDataService\x12V\n\rLoadBootstrap\x12!.survival.v1.LoadBootstrapRequest\x1a\".survival.v1.LoadBootstrapResponse\x12S\n\x0c\x41ppendEvents\x12 .survival.v1.AppendEventsRequest\x1a!.survival.v1.AppendEventsResponse\x12S\n\x0cSaveSnapshot\x12 .survival.v1.SaveSnapshotRequest\x1a!.survival.v1.SaveSnapshotResponse2P\n\x11\x41\x63torStateService\x12;\n\x04Save\x12\x18.survival.v1.SaveRequest\x1a\x19.survival.v1.SaveResponseB\xac\x01\n\x0f\x63om.survival.v1B\x0eWorlddataProtoP\x01Z<living-world-survival/services/gen/go/survival/v1;survivalv1\xa2\x02\x03SXX\xaa\x02\x0bSurvival.V1\xca\x02\x0bSurvival\\V1\xe2\x02\x17Survival\\V1\\GPBMetadata\xea\x02\x0cSurvival::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1bsurvival/v1/worlddata.proto\x12\x0bsurvival.v1\x1a\x18survival/v1/common.proto\"T\n\x14LoadBootstrapRequest\x12\x19\n\x08world_id\x18\x01 \x01(\tR\x07worldId\x12!\n\x0cserver_build\x18\x02 \x01(\tR\x0bserverBuild\"\xd9\x01\n\x15LoadBootstrapResponse\x12\x1f\n\x0bsnapshot_id\x18\x01 \x01(\tR\nsnapshotId\x12\x1a\n\x08sequence\x18\x02 \x01(\x03R\x08sequence\x12)\n\x10snapshot_payload\x18\x03 \x01(\x0cR\x0fsnapshotPayload\x12\x37\n\nevent_tail\x18\x04 \x03(\x0b\x32\x18.survival.v1.DomainEventR\teventTail\x12\x1f\n\x0bmaster_data\x18\x05 \x01(\x0cR\nmasterData\"d\n\x13\x41ppendEventsRequest\x12\x1b\n\tserver_id\x18\x01 \x01(\tR\x08serverId\x12\x30\n\x06\x65vents\x18\x02 \x03(\x0b\x32\x18.survival.v1.DomainEventR\x06\x65vents\"K\n\x14\x41ppendEventsResponse\x12\x33\n\x07results\x18\x01 \x03(\x0e\x32\x19.survival.v1.ResultStatusR\x07results\"\x82\x01\n\x13SaveSnapshotRequest\x12\x19\n\x08world_id\x18\x01 \x01(\tR\x07worldId\x12\x1a\n\x08sequence\x18\x02 \x01(\x03R\x08sequence\x12\x1a\n\x08\x63hecksum\x18\x03 \x01(\tR\x08\x63hecksum\x12\x18\n\x07payload\x18\x04 \x01(\x0cR\x07payload\"7\n\x14SaveSnapshotResponse\x12\x1f\n\x0bsnapshot_id\x18\x01 \x01(\tR\nsnapshotId\"\xb3\x01\n\x0bSaveRequest\x12\x19\n\x08\x61\x63tor_id\x18\x01 \x01(\tR\x07\x61\x63torId\x12\x18\n\x07version\x18\x02 \x01(\x03R\x07version\x12%\n\x0epersonal_state\x18\x03 \x01(\x0cR\rpersonalState\x12H\n\x11inventory_summary\x18\x04 \x03(\x0b\x32\x1b.survival.v1.InventoryEntryR\x10inventorySummary\"A\n\x0cSaveResponse\x12\x31\n\x06status\x18\x01 \x01(\x0e\x32\x19.survival.v1.ResultStatusR\x06status2\x94\x02\n\x10WorldDataService\x12V\n\rLoadBootstrap\x12!.survival.v1.LoadBootstrapRequest\x1a\".survival.v1.LoadBootstrapResponse\x12S\n\x0c\x41ppendEvents\x12 .survival.v1.AppendEventsRequest\x1a!.survival.v1.AppendEventsResponse\x12S\n\x0cSaveSnapshot\x12 .survival.v1.SaveSnapshotRequest\x1a!.survival.v1.SaveSnapshotResponse2P\n\x11\x41\x63torStateService\x12;\n\x04Save\x12\x18.survival.v1.SaveRequest\x1a\x19.survival.v1.SaveResponseB\xac\x01\n\x0f\x63om.survival.v1B\x0eWorlddataProtoP\x01Z<living-world-survival/services/gen/go/survival/v1;survivalv1\xa2\x02\x03SXX\xaa\x02\x0bSurvival.V1\xca\x02\x0bSurvival\\V1\xe2\x02\x17Survival\\V1\\GPBMetadata\xea\x02\x0cSurvival::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -36,21 +36,21 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_LOADBOOTSTRAPREQUEST']._serialized_start=70
   _globals['_LOADBOOTSTRAPREQUEST']._serialized_end=154
   _globals['_LOADBOOTSTRAPRESPONSE']._serialized_start=157
-  _globals['_LOADBOOTSTRAPRESPONSE']._serialized_end=341
-  _globals['_APPENDEVENTSREQUEST']._serialized_start=343
-  _globals['_APPENDEVENTSREQUEST']._serialized_end=443
-  _globals['_APPENDEVENTSRESPONSE']._serialized_start=445
-  _globals['_APPENDEVENTSRESPONSE']._serialized_end=520
-  _globals['_SAVESNAPSHOTREQUEST']._serialized_start=523
-  _globals['_SAVESNAPSHOTREQUEST']._serialized_end=653
-  _globals['_SAVESNAPSHOTRESPONSE']._serialized_start=655
-  _globals['_SAVESNAPSHOTRESPONSE']._serialized_end=710
-  _globals['_SAVEREQUEST']._serialized_start=713
-  _globals['_SAVEREQUEST']._serialized_end=892
-  _globals['_SAVERESPONSE']._serialized_start=894
-  _globals['_SAVERESPONSE']._serialized_end=959
-  _globals['_WORLDDATASERVICE']._serialized_start=962
-  _globals['_WORLDDATASERVICE']._serialized_end=1238
-  _globals['_ACTORSTATESERVICE']._serialized_start=1240
-  _globals['_ACTORSTATESERVICE']._serialized_end=1320
+  _globals['_LOADBOOTSTRAPRESPONSE']._serialized_end=374
+  _globals['_APPENDEVENTSREQUEST']._serialized_start=376
+  _globals['_APPENDEVENTSREQUEST']._serialized_end=476
+  _globals['_APPENDEVENTSRESPONSE']._serialized_start=478
+  _globals['_APPENDEVENTSRESPONSE']._serialized_end=553
+  _globals['_SAVESNAPSHOTREQUEST']._serialized_start=556
+  _globals['_SAVESNAPSHOTREQUEST']._serialized_end=686
+  _globals['_SAVESNAPSHOTRESPONSE']._serialized_start=688
+  _globals['_SAVESNAPSHOTRESPONSE']._serialized_end=743
+  _globals['_SAVEREQUEST']._serialized_start=746
+  _globals['_SAVEREQUEST']._serialized_end=925
+  _globals['_SAVERESPONSE']._serialized_start=927
+  _globals['_SAVERESPONSE']._serialized_end=992
+  _globals['_WORLDDATASERVICE']._serialized_start=995
+  _globals['_WORLDDATASERVICE']._serialized_end=1271
+  _globals['_ACTORSTATESERVICE']._serialized_start=1273
+  _globals['_ACTORSTATESERVICE']._serialized_end=1353
 # @@protoc_insertion_point(module_scope)

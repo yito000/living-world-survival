@@ -34,10 +34,27 @@ func TestLoadMaster(t *testing.T) {
 	if rareWeapon.Rarity != 3 {
 		t.Errorf("rare_weapon rarity: got %d want 3", rareWeapon.Rarity)
 	}
-	// cooked_meat carries a use_effect (Hunger+30).
+	// cooked_meat carries a use_effect (Hunger+30) and the M3 survival fields.
 	cooked, _ := cat.Get("cooked_meat")
 	if len(cooked.UseEffect) == 0 || string(cooked.UseEffect) == "{}" {
 		t.Errorf("cooked_meat should have a use_effect, got %q", string(cooked.UseEffect))
+	}
+	if cooked.ConsumeHunger != 30 || cooked.WasteOutput != 1 {
+		t.Errorf("cooked_meat: got consume_hunger=%d waste_output=%d want 30/1", cooked.ConsumeHunger, cooked.WasteOutput)
+	}
+	// luxury_food produces double waste on cooking (7.2 / 8.6-2).
+	if lux, _ := cat.Get("luxury_food"); lux.WasteOutput != 2 || lux.ConsumeHunger != 30 {
+		t.Errorf("luxury_food: got waste_output=%d consume_hunger=%d want 2/30", lux.WasteOutput, lux.ConsumeHunger)
+	}
+	// Weapons/tools are quality/durability-bearing individuals (item_instances).
+	if !rareWeapon.IsInstance || rareWeapon.PrimaryTag != "weapon.rare" {
+		t.Errorf("rare_weapon: is_instance=%v primary_tag=%q", rareWeapon.IsInstance, rareWeapon.PrimaryTag)
+	}
+	if stone.IsInstance {
+		t.Errorf("stone should be a stackable, not an instance")
+	}
+	if stone.PrimaryTag != "resource.stone" {
+		t.Errorf("stone primary_tag: got %q", stone.PrimaryTag)
 	}
 }
 

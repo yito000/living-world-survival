@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -112,31 +113,71 @@ func appendOneTx(ctx context.Context, tx pgx.Tx, e EventInput) (AppendOutcome, e
 	if err != nil {
 		return 0, err
 	}
-	_, err = sp.Exec(ctx,
+	// 1) Persist the event. A (world_id, sequence) unique violation here means a
+	//    racing sequence — report CONFLICT and roll back only this event.
+	if _, err := sp.Exec(ctx,
 		`INSERT INTO domain_events
 		   (event_id, world_id, aggregate_id, local_sequence, sequence, type, payload, occurred_at)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
 		e.EventID, e.WorldID, e.AggregateID, e.LocalSequence, next, e.Type,
 		jsonbArg(e.Payload), msToTime(e.OccurredAtMs),
-	)
-	if err == nil {
-		// Transactional outbox: publish target for WorldState/Batch consumers.
-		_, err = sp.Exec(ctx,
-			`INSERT INTO outbox_messages (message_id, topic, payload) VALUES ($1, $2, $3::jsonb)`,
-			NewUUID(), eventSubject(e.WorldID, e.Type), jsonbArg(e.Payload),
-		)
-	}
-	if err != nil {
+	); err != nil {
 		_ = sp.Rollback(ctx)
 		if isUniqueViolation(err) {
 			return AppendConflict, nil
 		}
 		return 0, fmt.Errorf("store: insert event: %w", err)
 	}
+	// 2) Apply the event's DB side-effects (inventory/item/currency/world_items/
+	//    blueprint) atomically with the event (0.3 / 3.2 — no partial apply).
+	if err := applyEffectTx(ctx, sp, e); err != nil {
+		_ = sp.Rollback(ctx)
+		return 0, fmt.Errorf("store: apply effect: %w", err)
+	}
+	// 3) Transactional outbox: enqueue the full event envelope for the relay so
+	//    NATS is published only after the event durably commits (0.4 / 3.3).
+	if _, err := sp.Exec(ctx,
+		`INSERT INTO outbox_messages (message_id, topic, payload) VALUES ($1, $2, $3::jsonb)`,
+		NewUUID(), eventSubject(e.WorldID, e.Type), outboxEnvelope(e, next),
+	); err != nil {
+		_ = sp.Rollback(ctx)
+		return 0, fmt.Errorf("store: enqueue outbox: %w", err)
+	}
 	if err := sp.Commit(ctx); err != nil {
 		return 0, err
 	}
 	return AppendOK, nil
+}
+
+// outboxEnvelope builds the JSON published to NATS: enough of the DomainEvent for
+// a consumer to dedup by event_id and route by type (0.3/0.4). The raw payload is
+// embedded verbatim under "payload".
+func outboxEnvelope(e EventInput, sequence int64) string {
+	env := struct {
+		EventID       string          `json:"event_id"`
+		WorldID       string          `json:"world_id"`
+		AggregateID   string          `json:"aggregate_id"`
+		LocalSequence int64           `json:"local_sequence"`
+		Sequence      int64           `json:"sequence"`
+		Type          string          `json:"type"`
+		Payload       json.RawMessage `json:"payload"`
+		OccurredAtMs  int64           `json:"occurred_at_unix_ms"`
+	}{
+		EventID:       e.EventID,
+		WorldID:       e.WorldID,
+		AggregateID:   e.AggregateID,
+		LocalSequence: e.LocalSequence,
+		Sequence:      sequence,
+		Type:          e.Type,
+		Payload:       json.RawMessage(jsonbArg(e.Payload)),
+		OccurredAtMs:  e.OccurredAtMs,
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		// Payload is already validated JSON upstream; fall back to raw payload.
+		return jsonbArg(e.Payload)
+	}
+	return string(b)
 }
 
 // LoadEventTail returns all events for a world with sequence > afterSequence,

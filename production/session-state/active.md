@@ -24,3 +24,11 @@
 - Deviations: None blocking. Backend schema bug found by real DS E2E and fixed on B side: domain_events.aggregate_id and actor id columns changed from UUID to TEXT to match proto string contract.
 - Tech debt logged: None.
 - Next recommended: Sprint/M2 close-out QA sequence if no additional Story_0002 follow-ups remain.
+
+## Session Extract - /dev-story 2026-07-15 M3 Windows
+- Story: docs/prompts/story_0003/win/unity/06A_M3実装指示書_Windows側_v0.1.md - M3 Windows DS gameplay logic and client UI foundation
+- Files changed: unity/SurvivalWorld/Assets/Scripts/Shared, unity/SurvivalWorld/Assets/Scripts/Server/Inventory, unity/SurvivalWorld/Assets/Scripts/Server/Persistence, unity/SurvivalWorld/Assets/Scripts/Server/Combat, unity/SurvivalWorld/Assets/Scripts/Server/Simulation, unity/SurvivalWorld/Assets/Scripts/Server/Handlers, unity/SurvivalWorld/Assets/Scripts/Client, unity/SurvivalWorld/Assets/Tests/EditMode/M3SurvivalSystemsTests.cs
+- Test written: unity/SurvivalWorld/Assets/Tests/EditMode/M3SurvivalSystemsTests.cs covering Damage Matrix, recipe/deadlock constraints, Hunger thresholds, mining full-inventory rejection, station reserve/cancel, and hunting/carcass single-use drops
+- Verification: Unity MCP EditMode 46 total / 45 passed / 1 ignored (existing optional WSL2 JSON test); Unity MCP PlayMode 4/4 passed; Unity Console compile errors cleared. scripts\\unity_test.ps1 and scripts\\unity_build_server.ps1 returned code 1 before test/build execution while another Unity Editor instance was running; logs contained no compile/build error body.
+- Blockers: Batch Unity server build not verified in this turn due existing Unity process/batch startup failure.
+- Next: /code-review unity/SurvivalWorld/Assets/Scripts/Shared unity/SurvivalWorld/Assets/Scripts/Server unity/SurvivalWorld/Assets/Scripts/Client unity/SurvivalWorld/Assets/Tests/EditMode/M3SurvivalSystemsTests.cs then /story-done docs/prompts/story_0003/win/unity/06A_M3実装指示書_Windows側_v0.1.md

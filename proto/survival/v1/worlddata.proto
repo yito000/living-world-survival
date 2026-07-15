@@ -31,6 +31,9 @@ message LoadBootstrapResponse {
   int64 sequence = 2;
   bytes snapshot_payload = 3;    // JSONB payload
   repeated DomainEvent event_tail = 4;
+  // マスタデータ（ItemDefinition/Recipe/ResourceNodeDef）を JSON で同梱（M3 / 06B 3.4）。
+  // DS は MasterDataStore にキャッシュし数量・重量・レシピ・ツール要件の権威値に使う。
+  bytes master_data = 5;
 }
 
 message AppendEventsRequest {
