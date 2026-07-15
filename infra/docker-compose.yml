@@ -67,6 +67,8 @@ services:
     env_file: ../.env
     depends_on:
       nats: { condition: service_started }
+      # ai_decisions(produced) を記録するため Postgres にも依存（記録は best-effort）。
+      postgres: { condition: service_healthy }
     # health 用 HTTP（smoke で確認）。既定 8084。
     ports: ["8084:8084"]
 

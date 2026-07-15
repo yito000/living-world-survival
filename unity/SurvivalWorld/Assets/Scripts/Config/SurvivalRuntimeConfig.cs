@@ -29,6 +29,9 @@ namespace SurvivalWorld.Config
         [SerializeField] private int outboxFlushIntervalMilliseconds = 1000;
         [SerializeField] private int snapshotIntervalSeconds = 30;
 
+        [Header("NATS")]
+        [SerializeField] private string natsUrl = "nats://127.0.0.1:4222";
+
         [Header("Join Ticket")]
         [TextArea(3, 6)]
         [SerializeField] private string joinTicketPublicKey = string.Empty;
@@ -56,6 +59,7 @@ namespace SurvivalWorld.Config
         public string WorldDataGrpcSharedSecret => worldDataGrpcSharedSecret;
         public int OutboxFlushIntervalMilliseconds => Mathf.Max(100, outboxFlushIntervalMilliseconds);
         public int SnapshotIntervalSeconds => Mathf.Max(1, snapshotIntervalSeconds);
+        public string NatsUrl => natsUrl;
         public string JoinTicketPublicKey => joinTicketPublicKey;
         public bool DevLocalMode => devLocalMode;
         public bool AutoStartLocalServerInEditor => autoStartLocalServerInEditor;

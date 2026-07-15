@@ -14,6 +14,8 @@ using SurvivalWorld.Dev;
 using SurvivalWorld.Inventory;
 using SurvivalWorld.Items;
 using SurvivalWorld.Net;
+using SurvivalWorld.Server.AI;
+using SurvivalWorld.Shared.MasterData;
 using SurvivalWorld.World;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -38,6 +40,7 @@ namespace SurvivalWorld.Server
         private WorldRuntimeState worldRuntimeState;
         private RuntimePersistenceAgent persistenceAgent;
         private InventoryRuntimeService inventoryRuntimeService;
+        private AIActorSystem aiActorSystem;
         private bool serverBootstrapActive;
 
         private void Awake()
@@ -193,6 +196,14 @@ namespace SurvivalWorld.Server
                         cancellationToken).Forget();
                 }
 
+                if (aiActorSystem != null)
+                {
+                    aiActorSystem.RunAsync(
+                        TimeSpan.FromMilliseconds(config.TickMilliseconds),
+                        TimeSpan.FromSeconds(config.SnapshotIntervalSeconds),
+                        cancellationToken).Forget();
+                }
+
                 MatchmakingGatewayResult register = await matchmakingGateway.RegisterServerAsync(config.ServerId, config.WorldId, config.BuildId, config.ServerEndpoint, config.ServerCapacity, cancellationToken);
                 if (!register.Ok)
                 {
@@ -225,6 +236,7 @@ namespace SurvivalWorld.Server
                 if (config != null && config.DevLocalMode)
                 {
                     ConfigureInventoryRuntime(NullInventoryEventSink.Instance);
+                    ConfigureAIActorSystem(NullActorStateGateway.Instance);
                     return WorldBootstrapResult.Success(0, 0);
                 }
 
@@ -237,6 +249,7 @@ namespace SurvivalWorld.Server
             {
                 persistenceAgent = new RuntimePersistenceAgent(worldDataGateway, worldRuntimeState, config.ServerId, config.WorldId);
                 ConfigureInventoryRuntime(persistenceAgent);
+                ConfigureAIActorSystem(CreateActorStateGateway());
             }
 
             return result;
@@ -248,6 +261,26 @@ namespace SurvivalWorld.Server
             inventoryRuntimeService = new InventoryRuntimeService(ItemDefinitionCatalog.CreateMvpCatalog(), eventSink ?? NullInventoryEventSink.Instance, configuredWorldId);
         }
 
+        private void ConfigureAIActorSystem(IActorStateGateway actorStateGateway)
+        {
+            string configuredServerId = config == null ? string.Empty : config.ServerId;
+            string configuredWorldId = config == null ? string.Empty : config.WorldId;
+            aiActorSystem = AIActorSystem.CreateDefault(configuredServerId, configuredWorldId, M3ItemDefinitions.CreateCatalog(), actorStateGateway ?? NullActorStateGateway.Instance, CreateAIDecisionTransport());
+            Debug.Log("AIActorSystem configured with " + aiActorSystem.Actors.Count + " actors.");
+        }
+
+        private IAIDecisionTransport CreateAIDecisionTransport()
+        {
+            string natsUrl = Environment.GetEnvironmentVariable("NATS_URL");
+            if (string.IsNullOrWhiteSpace(natsUrl) && config != null)
+            {
+                natsUrl = config.NatsUrl;
+            }
+
+            return string.IsNullOrWhiteSpace(natsUrl)
+                ? NullAIDecisionTransport.Instance
+                : new CoreNatsAIDecisionTransport(natsUrl);
+        }
         public bool TryApplyInventoryAdd(NetworkConnection connection, string commandId, string itemDefinitionId, int quantity, out InventoryMutationResult result)
         {
             result = null;
@@ -340,6 +373,18 @@ namespace SurvivalWorld.Server
 
             var client = new WorldDataService.WorldDataServiceClient(worldDataGrpcChannel);
             return new GeneratedWorldDataGateway(client, config.WorldDataGrpcSharedSecret);
+        }
+
+        private IActorStateGateway CreateActorStateGateway()
+        {
+            if (worldDataGrpcChannel == null)
+            {
+                return NullActorStateGateway.Instance;
+            }
+
+            var client = new ActorStateService.ActorStateServiceClient(worldDataGrpcChannel);
+            string secret = config == null ? string.Empty : config.WorldDataGrpcSharedSecret;
+            return new GeneratedActorStateGateway(client, secret);
         }
 
         private async UniTask LoadWorldSceneIfNeededAsync(CancellationToken cancellationToken)
@@ -455,14 +500,15 @@ namespace SurvivalWorld.Server
             lifetime = null;
 
             string serverId = config == null ? string.Empty : config.ServerId;
-            DrainAndShutdownAsync(serverId, matchmakingGateway, persistenceAgent, authGrpcChannel, worldDataGrpcChannel).Forget();
+            DrainAndShutdownAsync(serverId, matchmakingGateway, persistenceAgent, aiActorSystem, authGrpcChannel, worldDataGrpcChannel).Forget();
             authGrpcChannel = null;
             worldDataGrpcChannel = null;
             persistenceAgent = null;
+            aiActorSystem = null;
             inventoryRuntimeService = null;
         }
 
-        private static async UniTaskVoid DrainAndShutdownAsync(string serverId, IMatchmakingGateway gateway, RuntimePersistenceAgent persistenceAgent, ChannelBase authChannel, ChannelBase worldDataChannel)
+        private static async UniTaskVoid DrainAndShutdownAsync(string serverId, IMatchmakingGateway gateway, RuntimePersistenceAgent persistenceAgent, AIActorSystem aiActorSystem, ChannelBase authChannel, ChannelBase worldDataChannel)
         {
             if (persistenceAgent != null)
             {
@@ -474,6 +520,19 @@ namespace SurvivalWorld.Server
                 catch (Exception ex)
                 {
                     Debug.LogWarning("World persistence drain failed: " + ex.Message);
+                }
+            }
+
+            if (aiActorSystem != null)
+            {
+                try
+                {
+                    await aiActorSystem.SaveAllAsync(CancellationToken.None);
+                    aiActorSystem.Stop();
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("AI actor state drain failed: " + ex.Message);
                 }
             }
 
@@ -511,5 +570,7 @@ namespace SurvivalWorld.Server
         }
     }
 }
+
+
 
 

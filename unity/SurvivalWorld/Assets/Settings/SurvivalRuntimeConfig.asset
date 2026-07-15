@@ -24,6 +24,11 @@ MonoBehaviour:
   heartbeatSeconds: 5
   authGrpcEndpoint: 127.0.0.1:9091
   authGrpcSharedSecret:
+  worldDataGrpcEndpoint: 127.0.0.1:8092
+  worldDataGrpcSharedSecret:
+  outboxFlushIntervalMilliseconds: 1000
+  snapshotIntervalSeconds: 30
+  natsUrl: nats://127.0.0.1:4222
   joinTicketPublicKey: IRp/SkYEWrMkt5UEtYBoCHgmrd+jbcXACcge3r7eBjo=
   devLocalMode: 0
   autoStartLocalServerInEditor: 1

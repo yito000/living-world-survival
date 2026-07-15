@@ -1,19 +1,26 @@
-"""WorldState NATS 購読土台（M3 / 06B 3.3）。
+"""WorldState NATS 購読（M4 / 07B 3.3-3.4）。
 
-`world.*.event.resource` と `world.*.event.actor` を JetStream の Durable Consumer で
-購読し、At-least-once の重複を `inbox_dedup(consumer_id, message_id)` で吸収して受信ログを
-出すところまでを担う（投影本体は M5）。R7 に従い handler には重い処理を置かない。
+M0/M3 の購読土台を拡張し、M4 では次を担う:
 
-nats / asyncpg は import 時にオプショナル扱いにして、インフラが無くても
-`import app.consumer` とユニットテストが通るようにする（app.main と同じ方針）。
+- ``world.*.event.actor`` を購読し ``actor_state_projections`` を投影・再構築（3.3）。
+  ``inbox_dedup`` で At-least-once の重複（同一 event_id）を吸収し二重適用を防ぐ。
+- ``world.*.event.resource`` は従来通り dedup + 受信ログのみ（投影対象外）。
+- ``ai.decision.request`` を購読し、投影＋``action_templates`` から候補 Template を
+  ルール絞り込みして ``ai_decisions`` に requested を記録（3.4）。**LLM 本体は M5**。
+
+R7 に従い handler には重い処理を置かない（テンプレ集合は起動時スナップショット、
+候補選択は in-memory、DB 書き込みは軽量 upsert のみ）。nats / asyncpg は import 時に
+オプショナル扱いにして、インフラ無しでもユニットテストが通るようにする。
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 from typing import Any, Protocol
+
+from app.candidates import select_candidates
+from app.repo import DecisionStore, ProjectionStore, TemplateRepo, decision_id_of
 
 try:  # pragma: no cover - import guard
     import nats
@@ -27,12 +34,14 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger("worldstate.consumer")
 
-# 購読 subject（14.3）。resource と actor の 2 系統を購読土台として受ける。
+# 購読 subject（14.3）。resource と actor の 2 系統を購読する。actor は投影対象。
 SUBJECTS: tuple[str, ...] = ("world.*.event.resource", "world.*.event.actor")
 # Durable Consumer 名（consumer_id）。inbox_dedup のキーにも使う。
 CONSUMER_ID = "worldstate"
 # JetStream ストリーム名（api 側 outbox publisher と一致, WORLD_EVENTS）。
 STREAM = "WORLD_EVENTS"
+# AI 判断要求の subject（14.3）。DS→worldstate。core NATS（JetStream ではない）。
+DECISION_REQUEST_SUBJECT = "ai.decision.request"
 
 
 class Dedup(Protocol):
@@ -53,10 +62,23 @@ def message_id_of(envelope: dict[str, Any]) -> str:
     return f"{world}:{seq}"
 
 
-async def handle_message(data: bytes, dedup: Dedup, consumer_id: str = CONSUMER_ID) -> bool:
+def category_of(subject: str) -> str:
+    """subject（world.{id}.event.{category}）から末尾のカテゴリを取り出す。不明なら空文字。"""
+    parts = subject.split(".") if subject else []
+    return parts[-1] if parts else ""
+
+
+async def handle_message(
+    data: bytes,
+    dedup: Dedup,
+    consumer_id: str = CONSUMER_ID,
+    projection: ProjectionStore | None = None,
+    category: str | None = None,
+) -> bool:
     """1 メッセージを処理する。新規に受理したら True、重複でスキップなら False。
 
-    投影は M5。ここでは envelope を解釈し、inbox_dedup で冪等記録＋ログのみ行う。
+    envelope を解釈し、inbox_dedup で冪等記録する。新規かつ actor イベントで projection が
+    与えられていれば ``actor_state_projections`` を投影する（二重適用は dedup で防ぐ, 3.3）。
     """
     try:
         envelope = json.loads(data)
@@ -79,8 +101,51 @@ async def handle_message(data: bytes, dedup: Dedup, consumer_id: str = CONSUMER_
             world_id,
         )
         return False
+
+    if projection is not None and category == "actor":
+        try:
+            version = await projection.apply(envelope)
+            if version is not None:
+                logger.info(
+                    "worldstate: projected %s type=%s world=%s v=%d",
+                    message_id,
+                    event_type,
+                    world_id,
+                    version,
+                )
+                return True
+        except Exception:  # pragma: no cover - defensive; redelivery/next event recovers
+            logger.exception("worldstate: projection apply failed for %s", message_id)
+
     logger.info("worldstate: received %s type=%s world=%s", message_id, event_type, world_id)
     return True
+
+
+def build_requested(request: dict[str, Any], templates: list[dict[str, Any]]) -> dict[str, Any]:
+    """DecisionRequest から requested レコードの材料（decision_id/actor/version/候補）を作る。
+
+    純関数（DB 非依存）。personal_state_version は proto の state_versions マップ、無ければ
+    state_version フィールドから解決する（B.1 マップ・07A 3.4）。
+    """
+    actor_id = str(request.get("actor_id", "unknown"))
+    state_version = _personal_state_version(request)
+    reason = str(request.get("reason", ""))
+    candidates = select_candidates(templates, reason)
+    return {
+        "decision_id": decision_id_of(actor_id, state_version),
+        "actor_id": actor_id,
+        "state_version": state_version,
+        "candidates": candidates,
+    }
+
+
+def _personal_state_version(request: dict[str, Any]) -> int:
+    versions = request.get("state_versions")
+    if isinstance(versions, dict) and versions:
+        if "personal_state" in versions:
+            return int(versions["personal_state"])
+        return int(next(iter(versions.values())))
+    return int(request.get("state_version", 0) or 0)
 
 
 class InMemoryDedup:
@@ -118,12 +183,22 @@ class PgDedup:
 
 
 class Consumer:
-    """JetStream の購読土台。start() で Durable Consumer を張り、メッセージを handler に流す。"""
+    """JetStream の購読。start() で Durable Consumer を張り、メッセージを handler に流す。
 
-    def __init__(self, nc: Any, dedup: Dedup, consumer_id: str = CONSUMER_ID) -> None:
+    actor イベントは projection（ProjectionStore）へ投影し、resource は dedup+ログのみ。
+    """
+
+    def __init__(
+        self,
+        nc: Any,
+        dedup: Dedup,
+        consumer_id: str = CONSUMER_ID,
+        projection: ProjectionStore | None = None,
+    ) -> None:
         self._nc = nc
         self._dedup = dedup
         self._consumer_id = consumer_id
+        self._projection = projection
         self._subs: list[Any] = []
 
     async def start(self) -> None:
@@ -138,10 +213,17 @@ class Consumer:
         await self._ensure_stream(js)
         for i, subject in enumerate(SUBJECTS):
             durable = f"{self._consumer_id}-{i}"
+            category = category_of(subject)
 
-            async def _cb(msg: Any) -> None:
+            async def _cb(msg: Any, _category: str = category) -> None:
                 try:
-                    await handle_message(msg.data, self._dedup, self._consumer_id)
+                    await handle_message(
+                        msg.data,
+                        self._dedup,
+                        self._consumer_id,
+                        projection=self._projection,
+                        category=_category,
+                    )
                     await msg.ack()
                 except Exception:  # pragma: no cover - defensive; redelivery handles it
                     logger.exception("worldstate: handler error; leaving message for redelivery")
@@ -173,17 +255,63 @@ class Consumer:
         self._subs.clear()
 
 
-async def build_pg_dedup() -> PgDedup | None:
-    """DATABASE_URL から asyncpg プールを張り PgDedup を返す。失敗時 None（購読土台は無効）。"""
-    if asyncpg is None:
-        return None
-    url = os.getenv("DATABASE_URL")
-    if not url:
-        return None
-    # asyncpg は libpq DSN の sslmode 等を解釈しないため postgres:// はそのまま渡す。
-    try:
-        pool = await asyncpg.create_pool(dsn=url, min_size=1, max_size=4)
-    except Exception:  # pragma: no cover - infra dependent
-        logger.warning("worldstate: could not connect Postgres for dedup", exc_info=True)
-        return None
-    return PgDedup(pool)
+class DecisionRequestConsumer:
+    """``ai.decision.request`` を購読し候補 Template を絞って requested を記録する（3.4）。
+
+    DS→worldstate は core NATS（JetStream ではない・request/response 経路）。テンプレ集合は
+    起動時にスナップショットして in-memory 選択（R7: handler は軽量）。**LLM 本体は M5**。
+    """
+
+    def __init__(self, nc: Any, templates: TemplateRepo, decisions: DecisionStore) -> None:
+        self._nc = nc
+        self._templates = templates
+        self._decisions = decisions
+        self._active: list[dict[str, Any]] = []
+        self._sub: Any = None
+
+    async def start(self) -> None:
+        if self._nc is None:
+            logger.info("worldstate: decision request consumer disabled (no NATS)")
+            return
+        try:
+            self._active = await self._templates.list_active()
+        except Exception:  # pragma: no cover - infra dependent
+            logger.exception("worldstate: could not load active templates; using empty set")
+            self._active = []
+        logger.info("worldstate: loaded %d active templates for candidates", len(self._active))
+
+        async def _cb(msg: Any) -> None:
+            await self._on_request(msg.data)
+
+        self._sub = await self._nc.subscribe(DECISION_REQUEST_SUBJECT, cb=_cb)
+        logger.info("worldstate: subscribed %s", DECISION_REQUEST_SUBJECT)
+
+    async def _on_request(self, data: bytes) -> None:
+        try:
+            request = json.loads(data)
+        except (ValueError, TypeError):
+            logger.warning("worldstate: drop malformed decision request")
+            return
+        if not isinstance(request, dict):
+            return
+        rec = build_requested(request, self._active)
+        try:
+            await self._decisions.record_requested(
+                rec["decision_id"], rec["actor_id"], rec["state_version"], rec["candidates"]
+            )
+            logger.info(
+                "worldstate: decision requested id=%s actor=%s candidates=%d",
+                rec["decision_id"],
+                rec["actor_id"],
+                len(rec["candidates"]),
+            )
+        except Exception:  # pragma: no cover - infra dependent
+            logger.exception("worldstate: could not record requested decision")
+
+    async def stop(self) -> None:
+        if self._sub is not None:
+            try:
+                await self._sub.unsubscribe()
+            except Exception:  # pragma: no cover
+                pass
+            self._sub = None
