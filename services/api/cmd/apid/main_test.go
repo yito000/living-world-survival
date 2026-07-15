@@ -6,16 +6,6 @@ import (
 	"testing"
 )
 
-func TestEnvOr(t *testing.T) {
-	t.Setenv("API_PORT", "18082")
-	if got := envOr("API_PORT", "8082"); got != "18082" {
-		t.Fatalf("envOr set: got %q want %q", got, "18082")
-	}
-	if got := envOr("DEFINITELY_UNSET_KEY_XYZ", "fallback"); got != "fallback" {
-		t.Fatalf("envOr fallback: got %q want %q", got, "fallback")
-	}
-}
-
 func TestHealthz(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {

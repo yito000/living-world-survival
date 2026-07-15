@@ -38,6 +38,17 @@ namespace SurvivalWorld.Net
                 throw new ArgumentException("Invalid server endpoint: " + serverEndpoint, nameof(serverEndpoint));
             }
 
+            await EnsureWorldSceneLoadedBeforeConnectAsync(cancellationToken);
+            if (networkManager == null)
+            {
+                networkManager = FindFirstObjectByType<NetworkManager>();
+            }
+
+            if (networkManager == null)
+            {
+                throw new InvalidOperationException("NetworkManager is required after loading the world scene.");
+            }
+
             Debug.Log("Starting FishNet client connection to " + endpoint.Host + ":" + endpoint.Port + ".");
             pendingJoinTicket = joinTicket;
             authenticatedCompletion = new UniTaskCompletionSource();
@@ -56,11 +67,6 @@ namespace SurvivalWorld.Net
                 {
                     await authenticatedCompletion.Task;
                 }
-
-                if (!string.IsNullOrWhiteSpace(worldSceneName) && SceneManager.GetActiveScene().name != worldSceneName)
-                {
-                    await SceneManager.LoadSceneAsync(worldSceneName).ToUniTask(cancellationToken: cancellationToken);
-                }
             }
             finally
             {
@@ -68,6 +74,33 @@ namespace SurvivalWorld.Net
                 pendingJoinTicket = null;
                 authenticatedCompletion = null;
             }
+        }
+
+        private async UniTask EnsureWorldSceneLoadedBeforeConnectAsync(CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(worldSceneName))
+            {
+                return;
+            }
+
+            Scene loadedScene = SceneManager.GetSceneByName(worldSceneName);
+            if (loadedScene.IsValid() && loadedScene.isLoaded)
+            {
+                if (SceneManager.GetActiveScene().name != worldSceneName)
+                {
+                    SceneManager.SetActiveScene(loadedScene);
+                }
+
+                return;
+            }
+
+            AsyncOperation operation = SceneManager.LoadSceneAsync(worldSceneName, LoadSceneMode.Single);
+            if (operation == null)
+            {
+                throw new InvalidOperationException("Failed to load client world scene: " + worldSceneName);
+            }
+
+            await operation.ToUniTask(cancellationToken: cancellationToken);
         }
 
         private void OnClientConnectionState(ClientConnectionStateArgs args)

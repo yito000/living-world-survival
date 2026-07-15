@@ -4,6 +4,7 @@
     "references": [
         "SurvivalWorld.Runtime",
         "SurvivalWorld.Generated",
+        "Google.Protobuf",
         "Unity.InputSystem",
         "FishNet.Runtime",
         "UniTask"
@@ -13,8 +14,10 @@
     ],
     "excludePlatforms": [],
     "allowUnsafeCode": false,
-    "overrideReferences": false,
-    "precompiledReferences": [],
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "Google.Protobuf.dll"
+    ],
     "autoReferenced": false,
     "defineConstraints": [],
     "versionDefines": [],
@@ -23,3 +26,4 @@
     ],
     "noEngineReferences": false
 }
+

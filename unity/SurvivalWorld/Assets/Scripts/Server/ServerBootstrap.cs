@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using Cysharp.Threading.Tasks;
 using FishNet.Connection;
@@ -10,7 +11,10 @@ using Grpc.Core;
 using Survival.V1;
 using SurvivalWorld.Config;
 using SurvivalWorld.Dev;
+using SurvivalWorld.Inventory;
+using SurvivalWorld.Items;
 using SurvivalWorld.Net;
+using SurvivalWorld.World;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnitySceneManager = UnityEngine.SceneManagement.SceneManager;
@@ -30,6 +34,10 @@ namespace SurvivalWorld.Server
         private IMatchmakingGateway matchmakingGateway = UnavailableMatchmakingGateway.Instance;
         private CancellationTokenSource lifetime;
         private ChannelBase authGrpcChannel;
+        private ChannelBase worldDataGrpcChannel;
+        private WorldRuntimeState worldRuntimeState;
+        private RuntimePersistenceAgent persistenceAgent;
+        private InventoryRuntimeService inventoryRuntimeService;
         private bool serverBootstrapActive;
 
         private void Awake()
@@ -104,7 +112,7 @@ namespace SurvivalWorld.Server
                 return UnavailableMatchmakingGateway.Instance;
             }
 
-            authGrpcChannel = CreateAuthGrpcChannel(endpoint);
+            authGrpcChannel = CreateGrpcChannel(endpoint, "Auth");
             if (authGrpcChannel == null)
             {
                 return UnavailableMatchmakingGateway.Instance;
@@ -114,7 +122,7 @@ namespace SurvivalWorld.Server
             return new GeneratedMatchmakingGateway(client, config.AuthGrpcSharedSecret);
         }
 
-        private static ChannelBase CreateAuthGrpcChannel(ServerEndpoint endpoint)
+        private static ChannelBase CreateGrpcChannel(ServerEndpoint endpoint, string label)
         {
             Type channelType = Type.GetType("Grpc.Core.Channel, Grpc.Core");
             if (channelType == null)
@@ -129,10 +137,10 @@ namespace SurvivalWorld.Server
             }
             catch (Exception ex)
             {
-                Debug.LogWarning("Failed to create Auth gRPC channel: " + ex);
+                Debug.LogWarning("Failed to create " + label + " gRPC channel: " + ex);
                 if (ex.InnerException != null)
                 {
-                    Debug.LogWarning("Auth gRPC channel inner exception: " + ex.InnerException);
+                    Debug.LogWarning(label + " gRPC channel inner exception: " + ex.InnerException);
                 }
 
                 return null;
@@ -171,6 +179,19 @@ namespace SurvivalWorld.Server
                 }
 
                 await LoadWorldSceneIfNeededAsync(cancellationToken);
+                WorldBootstrapResult worldBootstrap = await BootstrapWorldAsync(cancellationToken);
+                bool ready = worldBootstrap.Ok || config.DevLocalMode;
+                if (!worldBootstrap.Ok)
+                {
+                    Debug.LogWarning("World bootstrap failed: " + worldBootstrap.Error);
+                }
+                else if (persistenceAgent != null)
+                {
+                    persistenceAgent.RunAsync(
+                        TimeSpan.FromMilliseconds(config.OutboxFlushIntervalMilliseconds),
+                        TimeSpan.FromSeconds(config.SnapshotIntervalSeconds),
+                        cancellationToken).Forget();
+                }
 
                 MatchmakingGatewayResult register = await matchmakingGateway.RegisterServerAsync(config.ServerId, config.WorldId, config.BuildId, config.ServerEndpoint, config.ServerCapacity, cancellationToken);
                 if (!register.Ok)
@@ -181,7 +202,7 @@ namespace SurvivalWorld.Server
                 while (!cancellationToken.IsCancellationRequested)
                 {
                     int playerCount = networkManager.ServerManager.Clients.Count;
-                    MatchmakingGatewayResult heartbeat = await matchmakingGateway.HeartbeatAsync(config.ServerId, playerCount, true, config.TickMilliseconds, cancellationToken);
+                    MatchmakingGatewayResult heartbeat = await matchmakingGateway.HeartbeatAsync(config.ServerId, playerCount, ready, config.TickMilliseconds, cancellationToken);
                     if (!heartbeat.Ok)
                     {
                         Debug.LogWarning("Heartbeat failed: " + heartbeat.Error);
@@ -193,6 +214,132 @@ namespace SurvivalWorld.Server
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
             }
+        }
+
+        private async UniTask<WorldBootstrapResult> BootstrapWorldAsync(CancellationToken cancellationToken)
+        {
+            worldRuntimeState = new WorldRuntimeState();
+            IWorldDataGateway worldDataGateway = CreateWorldDataGateway();
+            if (worldDataGateway == null)
+            {
+                if (config != null && config.DevLocalMode)
+                {
+                    ConfigureInventoryRuntime(NullInventoryEventSink.Instance);
+                    return WorldBootstrapResult.Success(0, 0);
+                }
+
+                return WorldBootstrapResult.Failure("WorldData gateway is not configured.");
+            }
+
+            var bootstrapClient = new WorldBootstrapClient(worldDataGateway, worldRuntimeState);
+            WorldBootstrapResult result = await bootstrapClient.LoadAsync(config.WorldId, config.BuildId, cancellationToken);
+            if (result.Ok)
+            {
+                persistenceAgent = new RuntimePersistenceAgent(worldDataGateway, worldRuntimeState, config.ServerId, config.WorldId);
+                ConfigureInventoryRuntime(persistenceAgent);
+            }
+
+            return result;
+        }
+
+        private void ConfigureInventoryRuntime(IInventoryEventSink eventSink)
+        {
+            string configuredWorldId = config == null ? string.Empty : config.WorldId;
+            inventoryRuntimeService = new InventoryRuntimeService(ItemDefinitionCatalog.CreateMvpCatalog(), eventSink ?? NullInventoryEventSink.Instance, configuredWorldId);
+        }
+
+        public bool TryApplyInventoryAdd(NetworkConnection connection, string commandId, string itemDefinitionId, int quantity, out InventoryMutationResult result)
+        {
+            result = null;
+            if (!CanAcceptInventoryCommand(connection))
+            {
+                return false;
+            }
+
+            result = inventoryRuntimeService.AddItemCommand("player", InventoryOwnerId(connection), commandId, -1, itemDefinitionId, string.Empty, quantity);
+            LogInventoryMutation("ADD", connection, result);
+            return true;
+        }
+
+        public bool TryApplyInventoryCommand(NetworkConnection connection, InventoryCommand command, out InventoryMutationResult result)
+        {
+            result = null;
+            if (!CanAcceptInventoryCommand(connection) || command == null)
+            {
+                return false;
+            }
+
+            result = inventoryRuntimeService.ApplyCommand("player", InventoryOwnerId(connection), command);
+            LogInventoryMutation(command.Operation.ToString(), connection, result);
+            return true;
+        }
+
+        public InventorySnapshot GetInventorySnapshot(NetworkConnection connection)
+        {
+            if (connection == null || inventoryRuntimeService == null)
+            {
+                return null;
+            }
+
+            return inventoryRuntimeService.RequestSnapshot("player", InventoryOwnerId(connection));
+        }
+
+        private bool CanAcceptInventoryCommand(NetworkConnection connection)
+        {
+            if (connection == null || !connection.IsAuthenticated || !authenticatedClientIds.Contains(connection.ClientId))
+            {
+                Debug.LogWarning("Rejected inventory command from unauthenticated connection.");
+                return false;
+            }
+
+            if (inventoryRuntimeService == null)
+            {
+                Debug.LogWarning("Rejected inventory command because inventory runtime is not ready.");
+                return false;
+            }
+
+            return true;
+        }
+
+        private static string InventoryOwnerId(NetworkConnection connection)
+        {
+            return "connection:" + connection.ClientId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static void LogInventoryMutation(string operation, NetworkConnection connection, InventoryMutationResult result)
+        {
+            if (result == null)
+            {
+                Debug.LogWarning("Inventory command " + operation + " returned no result.");
+                return;
+            }
+
+            string eventId = result.DomainEvent == null ? string.Empty : result.DomainEvent.EventId;
+            string error = string.IsNullOrWhiteSpace(result.Error) ? string.Empty : ", error=" + result.Error;
+            Debug.Log("Inventory command applied: op=" + operation + ", connection=" + connection.ClientId + ", status=" + result.Status + ", version=" + (result.Snapshot == null ? -1 : result.Snapshot.Version) + ", event_id=" + eventId + error);
+        }
+
+        private IWorldDataGateway CreateWorldDataGateway()
+        {
+            if (config == null)
+            {
+                return null;
+            }
+
+            if (!EndpointParser.TryParse(config.WorldDataGrpcEndpoint, out var endpoint))
+            {
+                Debug.LogWarning("Invalid WorldData gRPC endpoint: " + config.WorldDataGrpcEndpoint);
+                return null;
+            }
+
+            worldDataGrpcChannel = CreateGrpcChannel(endpoint, "WorldData");
+            if (worldDataGrpcChannel == null)
+            {
+                return null;
+            }
+
+            var client = new WorldDataService.WorldDataServiceClient(worldDataGrpcChannel);
+            return new GeneratedWorldDataGateway(client, config.WorldDataGrpcSharedSecret);
         }
 
         private async UniTask LoadWorldSceneIfNeededAsync(CancellationToken cancellationToken)
@@ -308,12 +455,28 @@ namespace SurvivalWorld.Server
             lifetime = null;
 
             string serverId = config == null ? string.Empty : config.ServerId;
-            DrainAndShutdownAsync(serverId, matchmakingGateway, authGrpcChannel).Forget();
+            DrainAndShutdownAsync(serverId, matchmakingGateway, persistenceAgent, authGrpcChannel, worldDataGrpcChannel).Forget();
             authGrpcChannel = null;
+            worldDataGrpcChannel = null;
+            persistenceAgent = null;
+            inventoryRuntimeService = null;
         }
 
-        private static async UniTaskVoid DrainAndShutdownAsync(string serverId, IMatchmakingGateway gateway, ChannelBase channel)
+        private static async UniTaskVoid DrainAndShutdownAsync(string serverId, IMatchmakingGateway gateway, RuntimePersistenceAgent persistenceAgent, ChannelBase authChannel, ChannelBase worldDataChannel)
         {
+            if (persistenceAgent != null)
+            {
+                try
+                {
+                    await persistenceAgent.FlushAsync(CancellationToken.None);
+                    await persistenceAgent.SaveSnapshotAsync(CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    Debug.LogWarning("World persistence drain failed: " + ex.Message);
+                }
+            }
+
             if (!string.IsNullOrWhiteSpace(serverId) && gateway != null)
             {
                 try
@@ -326,6 +489,12 @@ namespace SurvivalWorld.Server
                 }
             }
 
+            await ShutdownChannelAsync("Auth", authChannel);
+            await ShutdownChannelAsync("WorldData", worldDataChannel);
+        }
+
+        private static async UniTask ShutdownChannelAsync(string label, ChannelBase channel)
+        {
             if (channel == null)
             {
                 return;
@@ -337,8 +506,10 @@ namespace SurvivalWorld.Server
             }
             catch (Exception ex)
             {
-                Debug.LogWarning("Auth gRPC channel shutdown failed: " + ex.Message);
+                Debug.LogWarning(label + " gRPC channel shutdown failed: " + ex.Message);
             }
         }
     }
 }
+
+

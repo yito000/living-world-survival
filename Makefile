@@ -4,7 +4,7 @@
 .DEFAULT_GOAL := help
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help bootstrap up down migrate proto lint test build assets smoke ci clean logs
+.PHONY: help bootstrap up down migrate proto lint test build assets smoke e2e-m2 ci clean logs
 
 help: ## ターゲット一覧
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
@@ -44,6 +44,9 @@ assets: ## Blenderアセット生成+検査
 smoke: up migrate build ## 全サービス起動+health確認
 	$(COMPOSE) up -d
 	@bash scripts/smoke.sh
+
+e2e-m2: ## M2手動E2Eスモーク(DS模擬→実apid: bootstrap→AppendEvents→outbox/NATS→snapshot→復元)
+	@bash scripts/e2e_m2_smoke.sh
 
 ci: proto lint test assets ## ★ローカルCI一括(サーバー不要)
 	@echo "Local CI passed."

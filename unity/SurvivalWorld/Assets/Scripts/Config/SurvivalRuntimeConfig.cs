@@ -23,6 +23,12 @@ namespace SurvivalWorld.Config
         [SerializeField] private string authGrpcEndpoint = "127.0.0.1:9091";
         [SerializeField] private string authGrpcSharedSecret = string.Empty;
 
+        [Header("WorldData gRPC")]
+        [SerializeField] private string worldDataGrpcEndpoint = "127.0.0.1:8092";
+        [SerializeField] private string worldDataGrpcSharedSecret = string.Empty;
+        [SerializeField] private int outboxFlushIntervalMilliseconds = 1000;
+        [SerializeField] private int snapshotIntervalSeconds = 30;
+
         [Header("Join Ticket")]
         [TextArea(3, 6)]
         [SerializeField] private string joinTicketPublicKey = string.Empty;
@@ -46,6 +52,10 @@ namespace SurvivalWorld.Config
         public float HeartbeatSeconds => Mathf.Max(1f, heartbeatSeconds);
         public string AuthGrpcEndpoint => authGrpcEndpoint;
         public string AuthGrpcSharedSecret => authGrpcSharedSecret;
+        public string WorldDataGrpcEndpoint => worldDataGrpcEndpoint;
+        public string WorldDataGrpcSharedSecret => worldDataGrpcSharedSecret;
+        public int OutboxFlushIntervalMilliseconds => Mathf.Max(100, outboxFlushIntervalMilliseconds);
+        public int SnapshotIntervalSeconds => Mathf.Max(1, snapshotIntervalSeconds);
         public string JoinTicketPublicKey => joinTicketPublicKey;
         public bool DevLocalMode => devLocalMode;
         public bool AutoStartLocalServerInEditor => autoStartLocalServerInEditor;
@@ -54,3 +64,4 @@ namespace SurvivalWorld.Config
         public string DevCharacterId => devCharacterId;
     }
 }
+
