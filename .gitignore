@@ -40,3 +40,7 @@ Thumbs.db
 # --- 一時 PowerShell 検証ファイル（ルート直下の暫定物） ---
 /test.ps1
 /test2.ps1
+
+# --- Visual Studio / Unity generated workspace files ---
+.vs/
+*.slnx
