@@ -28,6 +28,7 @@ import (
 	"living-world-survival/services/api/internal/itemdef"
 	"living-world-survival/services/api/internal/outbox"
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/api/internal/worldevent"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
@@ -57,17 +58,27 @@ func main() {
 	// ready yet). Non-fatal: the RPC surface does not depend on the DB seed.
 	go seedItemDefinitions(ctx, catalog, st)
 
-	// Connect to NATS in the background, then start the outbox relay.
+	// The WorldEventService announces Completed on worldevent.result, so it needs
+	// the NATS connection that is established asynchronously below. The publisher
+	// is swapped in once connected; until then transitions still commit, they are
+	// just not announced (3.6).
+	weServer := &worldevent.Server{Store: st}
+
+	// Connect to NATS in the background, then start the outbox relay and the
+	// world event proposal approver.
 	var nc atomic.Pointer[nats.Conn]
 	go func() {
 		connectNATS(ctx, cfg.NATSURL, &nc)
-		if c := nc.Load(); c != nil {
-			startRelay(ctx, c, st, cfg)
+		c := nc.Load()
+		if c == nil {
+			return
 		}
+		startWorldEventApprover(ctx, c, st, weServer)
+		startRelay(ctx, c, st, cfg)
 	}()
 
 	httpSrv := newHTTPServer(cfg, pool, &nc)
-	grpcSrv := newGRPCServer(cfg, st)
+	grpcSrv := newGRPCServer(cfg, st, weServer)
 
 	go func() {
 		log.Printf("apid: HTTP listening on %s", cfg.HTTPAddr)
@@ -128,7 +139,7 @@ func newHTTPServer(cfg *config.Config, pool *pgxpool.Pool, nc *atomic.Pointer[na
 	}
 }
 
-func newGRPCServer(cfg *config.Config, st *store.Store) *grpclib.Server {
+func newGRPCServer(cfg *config.Config, st *store.Store, we *worldevent.Server) *grpclib.Server {
 	var opts []grpclib.ServerOption
 	if cfg.GRPCSharedSecret != "" {
 		opts = append(opts, grpclib.UnaryInterceptor(sharedSecretInterceptor(cfg.GRPCSharedSecret)))
@@ -136,7 +147,25 @@ func newGRPCServer(cfg *config.Config, st *store.Store) *grpclib.Server {
 	s := grpclib.NewServer(opts...)
 	survivalv1.RegisterWorldDataServiceServer(s, &grpcserver.WorldDataServer{Store: st})
 	survivalv1.RegisterActorStateServiceServer(s, &grpcserver.ActorStateServer{Store: st})
+	survivalv1.RegisterWorldEventServiceServer(s, we)
 	return s
+}
+
+// startWorldEventApprover subscribes to worldevent.proposal.* and gives the
+// WorldEventService its result publisher (3.6). Failure is non-fatal: Register /
+// UpdateState keep working, proposals just go undecided until NATS recovers.
+func startWorldEventApprover(ctx context.Context, nc *nats.Conn, st *store.Store, we *worldevent.Server) {
+	results := worldevent.NewResultPublisher(nc)
+	we.SetResults(results)
+	approver := worldevent.NewApprover(nc, st, results)
+	if err := approver.Start(ctx); err != nil {
+		log.Printf("apid: world event approver disabled: %v", err)
+		return
+	}
+	go func() {
+		<-ctx.Done()
+		approver.Stop()
+	}()
 }
 
 func startRelay(ctx context.Context, nc *nats.Conn, st *store.Store, cfg *config.Config) {

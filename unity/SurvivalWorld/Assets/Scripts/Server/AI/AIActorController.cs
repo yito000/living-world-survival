@@ -23,6 +23,7 @@ namespace SurvivalWorld.Server.AI
         public AIPersonalState PersonalState { get; }
         public AIInventoryAdapter Inventory { get; }
         public ActionTemplateRunner Runner { get; }
+        public PrimitiveActionRegistry Registry => registry;
         public IDictionary<string, string> Blackboard => blackboard;
         public ISet<string> ActiveInterrupts => activeInterrupts;
 

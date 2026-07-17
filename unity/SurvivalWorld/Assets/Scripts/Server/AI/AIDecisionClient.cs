@@ -6,20 +6,24 @@ namespace SurvivalWorld.Server.AI
 {
     public sealed class AIDecisionClient
     {
+        private const long AllowedFutureClockSkewMs = 5000L;
+
         private readonly string serverId;
         private readonly string worldId;
         private readonly ActionTemplateCatalog templates;
         private readonly IAIDecisionTransport transport;
+        private readonly PrimitiveActionRegistry registry;
         private readonly HashSet<string> processedDecisionIds = new HashSet<string>(StringComparer.Ordinal);
         private readonly Queue<ActionDecision> receivedDecisions = new Queue<ActionDecision>();
         private readonly Dictionary<string, long> latestRequestStateVersionByActor = new Dictionary<string, long>(StringComparer.Ordinal);
 
-        public AIDecisionClient(string serverId, string worldId, ActionTemplateCatalog templates, IAIDecisionTransport transport)
+        public AIDecisionClient(string serverId, string worldId, ActionTemplateCatalog templates, IAIDecisionTransport transport, PrimitiveActionRegistry registry = null)
         {
             this.serverId = serverId ?? string.Empty;
             this.worldId = worldId ?? string.Empty;
             this.templates = templates ?? throw new ArgumentNullException(nameof(templates));
             this.transport = transport ?? NullAIDecisionTransport.Instance;
+            this.registry = registry;
         }
 
         public void Start()
@@ -75,6 +79,11 @@ namespace SurvivalWorld.Server.AI
                 return DecisionApplicationResult.Rejected("Decision actor does not match runtime actor.");
             }
 
+            if (decision.StateVersion <= 0L)
+            {
+                return DecisionApplicationResult.Rejected("state_version is required.");
+            }
+
             long minimumStateVersion = latestRequestStateVersionByActor.TryGetValue(decision.ActorId, out long requestedVersion)
                 ? requestedVersion
                 : actor.PersonalState.Version;
@@ -83,19 +92,34 @@ namespace SurvivalWorld.Server.AI
                 return DecisionApplicationResult.Rejected("Decision state_version is stale.");
             }
 
+            if (string.IsNullOrWhiteSpace(decision.TemplateId))
+            {
+                return DecisionApplicationResult.Rejected("template_id is required.");
+            }
+
             if (!templates.TryGet(decision.TemplateId, out ActionTemplateDefinition template))
             {
                 return DecisionApplicationResult.Rejected("Unknown template: " + decision.TemplateId);
             }
 
             long createdAtUnixMs = decision.CreatedAtUnixMs <= 0L ? unixTimeMs : decision.CreatedAtUnixMs;
+            if (createdAtUnixMs > unixTimeMs + AllowedFutureClockSkewMs)
+            {
+                return DecisionApplicationResult.Rejected("Decision created_at_unix_ms is in the future.");
+            }
+
             long leaseUntilUnixMs = createdAtUnixMs + template.MaxDurationSeconds * 1000L;
-            if (leaseUntilUnixMs < unixTimeMs)
+            if (leaseUntilUnixMs <= unixTimeMs)
             {
                 return DecisionApplicationResult.Rejected("Decision lease is expired.");
             }
 
-            ActionTemplateDefinition appliedTemplate = ShouldUseDecisionSteps(decision) ? template.WithDecisionSteps(decision.Steps) : template;
+            PrimitiveActionRegistry validationRegistry = registry ?? actor.Registry;
+            if (!TryBuildAppliedTemplate(decision, template, validationRegistry, out ActionTemplateDefinition appliedTemplate, out string validationError))
+            {
+                return DecisionApplicationResult.Rejected(validationError);
+            }
+
             ActionTemplateStartResult start = actor.ApplyTemplate(appliedTemplate, leaseUntilUnixMs, unixTimeMs);
             if (!start.Success)
             {
@@ -123,31 +147,74 @@ namespace SurvivalWorld.Server.AI
             transport.Dispose();
         }
 
-        private bool ShouldUseDecisionSteps(ActionDecision decision)
+        private bool TryBuildAppliedTemplate(
+            ActionDecision decision,
+            ActionTemplateDefinition template,
+            PrimitiveActionRegistry validationRegistry,
+            out ActionTemplateDefinition appliedTemplate,
+            out string error)
         {
-            if (decision == null || decision.Steps.Count == 0)
+            appliedTemplate = template;
+            error = string.Empty;
+            if (decision.Steps.Count == 0)
             {
-                return false;
+                return true;
             }
 
+            bool hasPrimitiveStep = false;
+            bool hasTemplateReferenceStep = false;
             for (int i = 0; i < decision.Steps.Count; i++)
             {
-                string stepId = decision.Steps[i] == null ? string.Empty : decision.Steps[i].ActionTemplateId;
+                ActionStep step = decision.Steps[i];
+                string stepId = step == null ? string.Empty : step.ActionTemplateId;
                 if (string.IsNullOrWhiteSpace(stepId))
                 {
                     continue;
                 }
 
-                if (string.Equals(stepId, decision.TemplateId, StringComparison.Ordinal) || templates.TryGet(stepId, out _))
+                if (validationRegistry != null && validationRegistry.Contains(stepId))
                 {
-                    return false;
+                    hasPrimitiveStep = true;
+                    continue;
                 }
 
+                if (IsTemplateReference(stepId, decision.TemplateId))
+                {
+                    hasTemplateReferenceStep = true;
+                    continue;
+                }
+
+                error = "Unknown primitive in decision step: " + stepId;
+                return false;
+            }
+
+            if (hasPrimitiveStep && hasTemplateReferenceStep)
+            {
+                error = "Decision steps cannot mix primitive IDs and template IDs.";
+                return false;
+            }
+
+            if (!hasPrimitiveStep)
+            {
                 return true;
             }
 
-            return false;
+            appliedTemplate = template.WithDecisionSteps(decision.Steps);
+            if (validationRegistry != null && !appliedTemplate.ValidatePrimitives(validationRegistry, out string missingPrimitive))
+            {
+                error = "Unknown primitive in decision step: " + missingPrimitive;
+                return false;
+            }
+
+            return true;
         }
+
+        private bool IsTemplateReference(string stepId, string decisionTemplateId)
+        {
+            return string.Equals(stepId, decisionTemplateId ?? string.Empty, StringComparison.Ordinal)
+                || templates.TryGet(stepId, out _);
+        }
+
         private void OnDecisionReceived(ActionDecision decision)
         {
             if (decision == null)

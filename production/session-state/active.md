@@ -43,3 +43,12 @@
 - Notes: DS runtime verification must use Ubuntu-26.04. No dedicated automated multi-client script was found; client and DS builds are current for manual multi-client E2E.
 - Tech debt logged: None
 - Next recommended: Sprint close-out QA sequence if both Windows and WSL2 M3 scopes are closed; otherwise complete the matching WSL2-side story-done.
+
+## Session Extract - /dev-story 2026-07-17 M5 Windows
+- Story: docs/prompts/story_0005/win/unity/08A_M5実装指示書_Windows側_v0.1.md - M5 Windows DS ActionDecision and WorldEvent local effects
+- Files changed: unity/SurvivalWorld/Assets/Scripts/Server/AI/AIDecisionClient.cs, unity/SurvivalWorld/Assets/Scripts/Server/AI/AIActorController.cs, unity/SurvivalWorld/Assets/Scripts/Server/AI/AIActorSystem.cs, unity/SurvivalWorld/Assets/Scripts/WorldEvent/, unity/SurvivalWorld/Assets/Tests/EditMode/M5WorldEventEditModeTests.cs
+- Test written: unity/SurvivalWorld/Assets/Tests/EditMode/M5WorldEventEditModeTests.cs covering primitive step validation/application, expired decision rejection, great_hunt caps, rare_resource budget cap, rare_buyer_rush count/duration, proposal conflict rejection, and proposal version mismatch rejection
+- Verification: dotnet build unity/SurvivalWorld/SurvivalWorld.Tests.EditMode.csproj passed; scripts\unity_test.ps1 passed; scripts\unity_build_server.ps1 passed
+- Deviations: Generated ActionDecision currently has no template_version or lease_until fields; Generated files were left untouched per Windows/WSL2 boundary, with lease enforced from created_at_unix_ms + template max duration and available state/template/step validation applied.
+- Blockers: None
+- Next: /code-review unity/SurvivalWorld/Assets/Scripts/Server/AI/AIDecisionClient.cs unity/SurvivalWorld/Assets/Scripts/WorldEvent unity/SurvivalWorld/Assets/Tests/EditMode/M5WorldEventEditModeTests.cs then /story-done docs/prompts/story_0005/win/unity/08A_M5実装指示書_Windows側_v0.1.md

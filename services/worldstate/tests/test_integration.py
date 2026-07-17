@@ -129,6 +129,14 @@ async def test_template_delivery_active() -> None:
         ids = {t["template_id"] for t in items}
         assert "safety.idle_at_camp" in ids
         assert "survival.eat_owned_food" in ids
+        # M5: World Event Template（10.3）は同じテーブルに同居するが、Action Template では
+        # ないので配信しない（DS はこれを行動テンプレとして解釈するため, 3.8）。
+        for world_event_id in (
+            "world_event.great_hunt",
+            "world_event.rare_resource",
+            "world_event.rare_buyer_rush",
+        ):
+            assert world_event_id not in ids
         for t in items:
             assert t["status"] == "active"
             # definition JSONB は基本 7.3 スキーマ（steps を持つ）。

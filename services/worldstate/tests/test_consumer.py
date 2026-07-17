@@ -8,6 +8,8 @@ from typing import Any
 import pytest
 
 from app.consumer import (
+    CONSUMER_ID,
+    SUBJECTS,
     InMemoryDedup,
     build_requested,
     category_of,
@@ -40,10 +42,14 @@ class _FakeProjection:
         self.calls: list[dict[str, Any]] = []
         self._versions: dict[str, int] = {}
 
-    async def apply(self, envelope: dict[str, Any]) -> int | None:
+    async def apply(
+        self, envelope: dict[str, Any], allow_aggregate_fallback: bool = True
+    ) -> int | None:
         self.calls.append(envelope)
         payload = envelope.get("payload") or {}
-        actor_id = str(payload.get("actor_id") or envelope.get("aggregate_id") or "")
+        actor_id = str(payload.get("actor_id") or "")
+        if not actor_id and allow_aggregate_fallback:
+            actor_id = str(envelope.get("aggregate_id") or "")
         if not actor_id or not envelope.get("world_id"):
             return None
         version = self._versions.get(actor_id)
@@ -109,6 +115,70 @@ async def test_resource_event_is_not_projected() -> None:
     proj = _FakeProjection()
     await handle_message(_envelope("ev-r"), dedup, projection=proj, category="resource")
     assert proj.calls == []
+
+
+def test_subjects_cover_actor_resource_economy() -> None:
+    # M5: economy を追加して 3 系統を購読する（14.3 / 3.1）。
+    assert SUBJECTS == (
+        "world.*.event.resource",
+        "world.*.event.actor",
+        "world.*.event.economy",
+    )
+    assert CONSUMER_ID == "worldstate-projection"
+
+
+@pytest.mark.asyncio
+async def test_economy_event_is_projected_when_actor_is_explicit() -> None:
+    dedup = InMemoryDedup()
+    proj = _FakeProjection()
+    env = _envelope(
+        "ev-e", "economy.purchased", payload={"actor_id": "actor-1", "wallet": {"cash": 5}}
+    )
+    accepted = await handle_message(env, dedup, projection=proj, category="economy")
+    assert accepted is True
+    assert len(proj.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_economy_event_without_actor_id_is_not_projected() -> None:
+    # economy の aggregate_id は Buyer 等 Actor でない集約を指し得るので、
+    # actor_id が payload に無ければ投影しない（actor へフォールバックさせない）。
+    dedup = InMemoryDedup()
+    proj = _FakeProjection()
+    env = json.dumps(
+        {
+            "event_id": "ev-b",
+            "world_id": "w1",
+            "type": "economy.buyer_spawned",
+            "aggregate_id": "buyer-7",
+            "sequence": 1,
+            "payload": {"stock": 3},
+        }
+    ).encode()
+    accepted = await handle_message(env, dedup, projection=proj, category="economy")
+    # dedup 上は新規として受理するが、投影は起こさない（版が返らない）。
+    assert accepted is True
+    assert proj.calls[0]["aggregate_id"] == "buyer-7"
+    assert proj._versions == {}
+
+
+@pytest.mark.asyncio
+async def test_actor_event_without_actor_id_falls_back_to_aggregate_id() -> None:
+    # actor カテゴリは契約ギャップ（payload の actor_id 欠落）を aggregate_id で吸収する。
+    dedup = InMemoryDedup()
+    proj = _FakeProjection()
+    env = json.dumps(
+        {
+            "event_id": "ev-c",
+            "world_id": "w1",
+            "type": "actor.moved",
+            "aggregate_id": "actor-9",
+            "sequence": 1,
+            "payload": {},
+        }
+    ).encode()
+    await handle_message(env, dedup, projection=proj, category="actor")
+    assert proj._versions == {"actor-9": 0}
 
 
 def test_build_requested_selects_candidates() -> None:

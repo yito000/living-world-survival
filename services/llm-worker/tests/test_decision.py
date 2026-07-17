@@ -1,9 +1,9 @@
-from worker.main import (
+from worker.decision import (
     FALLBACK_TEMPLATE,
-    _result_subject,
     _select_template,
     build_mock_decision,
     decision_id_of,
+    result_subject,
 )
 
 
@@ -42,10 +42,10 @@ def test_select_template_maps_reason() -> None:
 
 
 def test_result_subject_resolves_server_id() -> None:
-    assert _result_subject({"server_id": "s9"}) == "ai.decision.result.s9"
+    assert result_subject({"server_id": "s9"}) == "ai.decision.result.s9"
     # server_id 欠落は world_id、それも無ければ unknown へフォールバック。
-    assert _result_subject({"world_id": "w3"}) == "ai.decision.result.w3"
-    assert _result_subject({}) == "ai.decision.result.unknown"
+    assert result_subject({"world_id": "w3"}) == "ai.decision.result.w3"
+    assert result_subject({}) == "ai.decision.result.unknown"
 
 
 def test_decision_id_is_stable() -> None:

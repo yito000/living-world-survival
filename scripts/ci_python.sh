@@ -6,6 +6,10 @@ cmd="${1:-}"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
+# CI は実 LLM を絶対に呼ばない（08B 3.9）。llm-worker のテストは LLM をモッククライアントで
+# 差し替えるが、環境に ANTHROPIC_API_KEY が居ても実 API を叩かないよう明示的に固定する。
+export LLM_MOCK=1
+
 # 対象サービス: "dir:package:import_check"
 targets=(
   "services/worldstate:app:app.main"

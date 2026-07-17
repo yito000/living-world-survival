@@ -135,5 +135,9 @@ async def test_list_active_filters_active() -> None:
     repo = TemplateRepo(pool)
     items = await repo.list_active()
     assert len(items) == 1
-    sql, _ = pool.executed[0]
+    sql, args = pool.executed[0]
     assert "status = 'active'" in sql
+    # M5: World Event Template は同居しているが Action Template ではないので配信しない
+    # （DS は配信結果を行動テンプレとして解釈する, 3.8）。
+    assert "NOT (tags @> ARRAY[$1]::text[])" in sql
+    assert args == ("world_event",)

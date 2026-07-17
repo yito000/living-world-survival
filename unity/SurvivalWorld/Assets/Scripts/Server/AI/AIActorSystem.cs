@@ -44,7 +44,7 @@ namespace SurvivalWorld.Server.AI
             ActionTemplateCatalog templateCatalog = new ActionTemplateCatalog(ActionTemplateDefinition.CreateM4Defaults());
             PrimitiveActionRegistry primitiveRegistry = PrimitiveActionRegistry.CreateM4Defaults();
             RegisterDefaultMutatingPrimitives(primitiveRegistry);
-            var decisionClient = new AIDecisionClient(serverId, worldId, templateCatalog, decisionTransport ?? NullAIDecisionTransport.Instance);
+            var decisionClient = new AIDecisionClient(serverId, worldId, templateCatalog, decisionTransport ?? NullAIDecisionTransport.Instance, primitiveRegistry);
             var system = new AIActorSystem(templateCatalog, primitiveRegistry, new UtilityFallback(), decisionClient, new AIActorRuntimeStatePersistence(actorStateGateway, worldId));
             system.SpawnActors(DefaultActorCount, itemCatalog, worldId, serverId == null ? 0 : serverId.GetHashCode());
             return system;

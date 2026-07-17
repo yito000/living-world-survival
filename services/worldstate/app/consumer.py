@@ -34,10 +34,18 @@ except Exception:  # pragma: no cover
 
 logger = logging.getLogger("worldstate.consumer")
 
-# 購読 subject（14.3）。resource と actor の 2 系統を購読する。actor は投影対象。
-SUBJECTS: tuple[str, ...] = ("world.*.event.resource", "world.*.event.actor")
-# Durable Consumer 名（consumer_id）。inbox_dedup のキーにも使う。
-CONSUMER_ID = "worldstate"
+# 購読 subject（14.3）。M5 で economy を追加し、actor/resource/economy の 3 系統を購読する。
+# 投影対象は actor（常に）と economy（actor_id を持つもののみ）。resource は dedup+ログのみ。
+SUBJECTS: tuple[str, ...] = (
+    "world.*.event.resource",
+    "world.*.event.actor",
+    "world.*.event.economy",
+)
+# Durable Consumer 名（consumer_id）。inbox_dedup のキーにも使う（08B 3.1）。
+CONSUMER_ID = "worldstate-projection"
+# 投影対象カテゴリ。economy は actor_id が payload に明示された場合のみ投影する
+# （aggregate_id は Buyer 等 Actor でない集約を指し得るため、フォールバックさせない）。
+PROJECTED_CATEGORIES: frozenset[str] = frozenset({"actor", "economy"})
 # JetStream ストリーム名（api 側 outbox publisher と一致, WORLD_EVENTS）。
 STREAM = "WORLD_EVENTS"
 # AI 判断要求の subject（14.3）。DS→worldstate。core NATS（JetStream ではない）。
@@ -77,8 +85,9 @@ async def handle_message(
 ) -> bool:
     """1 メッセージを処理する。新規に受理したら True、重複でスキップなら False。
 
-    envelope を解釈し、inbox_dedup で冪等記録する。新規かつ actor イベントで projection が
-    与えられていれば ``actor_state_projections`` を投影する（二重適用は dedup で防ぐ, 3.3）。
+    envelope を解釈し、inbox_dedup で冪等記録する。新規かつ投影対象カテゴリ（actor/economy）で
+    projection が与えられていれば ``actor_state_projections`` を投影する（二重適用は dedup で
+    防ぐ, 3.1）。resource は dedup+ログのみ。
     """
     try:
         envelope = json.loads(data)
@@ -102,9 +111,11 @@ async def handle_message(
         )
         return False
 
-    if projection is not None and category == "actor":
+    if projection is not None and category in PROJECTED_CATEGORIES:
         try:
-            version = await projection.apply(envelope)
+            version = await projection.apply(
+                envelope, allow_aggregate_fallback=(category == "actor")
+            )
             if version is not None:
                 logger.info(
                     "worldstate: projected %s type=%s world=%s v=%d",

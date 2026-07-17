@@ -42,17 +42,27 @@ async def create_pool() -> Any | None:
         return None
 
 
+# World Event Template（10.3）は action_templates に相乗りしているが、Actor の行動テンプレでは
+# ない（definition は steps ではなく constraints を持つ）。配信/候補からは必ず除外する。
+WORLD_EVENT_TAG = "world_event"
+
+
 class TemplateRepo:
-    """action_templates の Reader/配信（07B 3.2）。status=active のみを配信する。"""
+    """action_templates の Reader/配信（07B 3.2）。status=active の**行動**テンプレのみ配信する。"""
 
     def __init__(self, pool: Any) -> None:
         self._pool = pool
 
     async def list_active(self) -> list[dict[str, Any]]:
-        """status=active のテンプレ definition 一式を template_id 昇順で返す。
+        """status=active の Action Template definition 一式を template_id 昇順で返す。
 
         DS 起動時取得（GET /internal/action_templates）と Utility Fallback 供給で使う。
         version で世代管理し、同 template_id は最新 version のみ返す（DS のキャッシュ突合用）。
+
+        M5 で同テーブルに World Event Template（10.3）が同居したため、``world_event`` タグの
+        行は除外する — DS はこれを Action Template として解釈する（07A のタグ→テンプレ解決）ので、
+        steps を持たない World Event 行を混ぜると Fallback の候補が壊れる。World Event 側は
+        api の承認検査（3.6）が template_id 直引きで参照するので、この除外の影響を受けない。
         """
         rows = await self._pool.fetch(
             """
@@ -60,8 +70,10 @@ class TemplateRepo:
                    template_id, version, status, tags, definition
               FROM action_templates
              WHERE status = 'active'
+               AND NOT (tags @> ARRAY[$1]::text[])
              ORDER BY template_id, version DESC
-            """
+            """,
+            WORLD_EVENT_TAG,
         )
         return [_template_row(r) for r in rows]
 
@@ -91,14 +103,18 @@ class ProjectionStore:
     def __init__(self, pool: Any) -> None:
         self._pool = pool
 
-    async def apply(self, envelope: dict[str, Any]) -> int | None:
-        """1 つの Actor イベント envelope を投影へ適用し、新しい projection_version を返す。
+    async def apply(
+        self, envelope: dict[str, Any], allow_aggregate_fallback: bool = True
+    ) -> int | None:
+        """1 つのイベント envelope を投影へ適用し、新しい projection_version を返す。
 
-        actor_id は payload.actor_id を第一に、無ければ aggregate_id にフォールバックする
-        （M3 の owner 欠落と同種の契約ギャップ・無ければ集約 id で投影を進める）。
+        actor_id は payload.actor_id を第一に、``allow_aggregate_fallback`` なら aggregate_id へ
+        フォールバックする（M3 の owner 欠落と同種の契約ギャップ・無ければ集約 id で投影を進める）。
+        economy イベントの aggregate_id は Buyer 等 Actor でない集約を指し得るので、呼び出し側は
+        フォールバックを切って payload.actor_id が明示された場合だけ投影する（3.1）。
         actor_id/world_id が解決できなければ何もしない（None）。
         """
-        actor_id, world_id = _actor_world_of(envelope)
+        actor_id, world_id = _actor_world_of(envelope, allow_aggregate_fallback)
         if not actor_id or not world_id:
             return None
         payload = _projection_payload(envelope)
@@ -119,6 +135,27 @@ class ProjectionStore:
             json.dumps(payload),
         )
         return int(row["projection_version"]) if row else None
+
+    async def reset(self, world_id: str | None = None) -> int:
+        """投影を捨てる（replay 前段, 3.1）。world_id 指定でその world のみ、省略で全件。
+
+        イベントが正なので投影は捨てて作り直せる（13.1）。削除行数を返す。
+        """
+        if world_id:
+            tag = await self._pool.execute(
+                "DELETE FROM actor_state_projections WHERE world_id = $1", world_id
+            )
+        else:
+            tag = await self._pool.execute("DELETE FROM actor_state_projections")
+        return _rows_affected(tag)
+
+
+def _rows_affected(tag: Any) -> int:
+    """asyncpg の command tag（"DELETE 3"）から件数を取り出す。解釈できなければ 0。"""
+    try:
+        return int(str(tag).rsplit(" ", 1)[-1])
+    except (ValueError, IndexError):  # pragma: no cover - defensive
+        return 0
 
 
 class DecisionStore:
@@ -165,12 +202,14 @@ def decision_id_of(actor_id: str, state_version: int) -> str:
     return f"{actor_id}:{state_version}"
 
 
-def _actor_world_of(envelope: dict[str, Any]) -> tuple[str, str]:
+def _actor_world_of(
+    envelope: dict[str, Any], allow_aggregate_fallback: bool = True
+) -> tuple[str, str]:
     payload = envelope.get("payload")
     actor_id = ""
     if isinstance(payload, dict):
         actor_id = str(payload.get("actor_id") or "")
-    if not actor_id:
+    if not actor_id and allow_aggregate_fallback:
         actor_id = str(envelope.get("aggregate_id") or "")
     world_id = str(envelope.get("world_id") or "")
     return actor_id, world_id
@@ -187,8 +226,8 @@ def _projection_payload(envelope: dict[str, Any]) -> dict[str, Any]:
             "sequence": envelope.get("sequence"),
         },
     }
-    # PersonalState / Inventory Summary / 現在行動が来ていれば投影へ引き上げる。
-    for key in ("personal_state", "inventory_summary", "active_template"):
+    # PersonalState / Inventory Summary / 現在行動 / 財布が来ていれば投影へ引き上げる。
+    for key in ("personal_state", "inventory_summary", "active_template", "wallet"):
         if key in body:
             proj[key] = body[key]
     return proj
