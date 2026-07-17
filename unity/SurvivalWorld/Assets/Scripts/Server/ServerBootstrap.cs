@@ -37,9 +37,13 @@ namespace SurvivalWorld.Server
         private CancellationTokenSource lifetime;
         private ChannelBase authGrpcChannel;
         private ChannelBase worldDataGrpcChannel;
+        private ChannelBase economyGrpcChannel;
         private WorldRuntimeState worldRuntimeState;
         private RuntimePersistenceAgent persistenceAgent;
         private InventoryRuntimeService inventoryRuntimeService;
+        private SurvivalWorld.Economy.BuyerRegistry buyerRegistry;
+        private SurvivalWorld.Economy.BuyerPurchaseHandler buyerPurchaseHandler;
+        private SurvivalWorld.Economy.BuyerSpawnController buyerSpawnController;
         private AIActorSystem aiActorSystem;
         private bool serverBootstrapActive;
 
@@ -236,6 +240,7 @@ namespace SurvivalWorld.Server
                 if (config != null && config.DevLocalMode)
                 {
                     ConfigureInventoryRuntime(NullInventoryEventSink.Instance);
+                    ConfigureEconomyRuntime();
                     ConfigureAIActorSystem(NullActorStateGateway.Instance);
                     return WorldBootstrapResult.Success(0, 0);
                 }
@@ -249,6 +254,7 @@ namespace SurvivalWorld.Server
             {
                 persistenceAgent = new RuntimePersistenceAgent(worldDataGateway, worldRuntimeState, config.ServerId, config.WorldId);
                 ConfigureInventoryRuntime(persistenceAgent);
+                ConfigureEconomyRuntime();
                 ConfigureAIActorSystem(CreateActorStateGateway());
             }
 
@@ -261,11 +267,30 @@ namespace SurvivalWorld.Server
             inventoryRuntimeService = new InventoryRuntimeService(ItemDefinitionCatalog.CreateMvpCatalog(), eventSink ?? NullInventoryEventSink.Instance, configuredWorldId);
         }
 
+
+        private void ConfigureEconomyRuntime()
+        {
+            if (inventoryRuntimeService == null)
+            {
+                buyerRegistry = null;
+                buyerPurchaseHandler = null;
+                buyerSpawnController = null;
+                return;
+            }
+
+            SurvivalWorld.Economy.IEconomyClient economyClient = CreateEconomyClient();
+            buyerRegistry = new SurvivalWorld.Economy.BuyerRegistry();
+            var reconciler = new SurvivalWorld.Economy.InventoryReconciler(inventoryRuntimeService, SurvivalWorld.Economy.NullInventorySnapshotProvider.Instance);
+            var protocol = new SurvivalWorld.Economy.PurchaseProtocol(economyClient, inventoryRuntimeService, reconciler);
+            string configuredWorldId = config == null ? string.Empty : config.WorldId;
+            buyerPurchaseHandler = new SurvivalWorld.Economy.BuyerPurchaseHandler(buyerRegistry, inventoryRuntimeService, protocol, configuredWorldId);
+            buyerSpawnController = new SurvivalWorld.Economy.BuyerSpawnController(economyClient, buyerRegistry, configuredWorldId, "mvp-region", "mvp-buyer-stock", 10000);
+        }
         private void ConfigureAIActorSystem(IActorStateGateway actorStateGateway)
         {
             string configuredServerId = config == null ? string.Empty : config.ServerId;
             string configuredWorldId = config == null ? string.Empty : config.WorldId;
-            aiActorSystem = AIActorSystem.CreateDefault(configuredServerId, configuredWorldId, M3ItemDefinitions.CreateCatalog(), actorStateGateway ?? NullActorStateGateway.Instance, CreateAIDecisionTransport());
+            aiActorSystem = AIActorSystem.CreateDefault(configuredServerId, configuredWorldId, M3ItemDefinitions.CreateCatalog(), actorStateGateway ?? NullActorStateGateway.Instance, CreateAIDecisionTransport(), inventoryRuntimeService, buyerPurchaseHandler);
             Debug.Log("AIActorSystem configured with " + aiActorSystem.Actors.Count + " actors.");
         }
 
@@ -307,6 +332,44 @@ namespace SurvivalWorld.Server
             return true;
         }
 
+
+        public bool TryApplyBuyerPurchaseCommand(NetworkConnection connection, BuyerPurchaseCommand command, out SurvivalWorld.Economy.BuyerPurchaseResult result)
+        {
+            result = null;
+            if (!CanAcceptBuyerPurchaseCommand(connection) || command == null)
+            {
+                return false;
+            }
+
+            Vector3 purchaserPosition = Vector3.zero;
+            if (spawnedPlayers.TryGetValue(connection.ClientId, out NetworkObject player) && player != null)
+            {
+                purchaserPosition = player.transform.position;
+            }
+
+            var actor = new SurvivalWorld.Economy.BuyerPurchaseActor("player", InventoryOwnerId(connection), purchaserPosition, true);
+            result = buyerPurchaseHandler.Handle(actor, command);
+            string error = string.IsNullOrWhiteSpace(result.Error) ? string.Empty : ", error=" + result.Error;
+            Debug.Log("Buyer purchase command result: connection=" + connection.ClientId + ", status=" + result.Status + ", api_status=" + result.ApiStatus + ", version=" + (result.Snapshot == null ? -1 : result.Snapshot.Version) + error);
+            return true;
+        }
+
+        private bool CanAcceptBuyerPurchaseCommand(NetworkConnection connection)
+        {
+            if (connection == null || !connection.IsAuthenticated || !authenticatedClientIds.Contains(connection.ClientId))
+            {
+                Debug.LogWarning("Rejected buyer purchase command from unauthenticated connection.");
+                return false;
+            }
+
+            if (buyerPurchaseHandler == null)
+            {
+                Debug.LogWarning("Rejected buyer purchase command because economy runtime is not ready.");
+                return false;
+            }
+
+            return true;
+        }
         public InventorySnapshot GetInventorySnapshot(NetworkConnection connection)
         {
             if (connection == null || inventoryRuntimeService == null)
@@ -352,6 +415,29 @@ namespace SurvivalWorld.Server
             Debug.Log("Inventory command applied: op=" + operation + ", connection=" + connection.ClientId + ", status=" + result.Status + ", version=" + (result.Snapshot == null ? -1 : result.Snapshot.Version) + ", event_id=" + eventId + error);
         }
 
+
+        private SurvivalWorld.Economy.IEconomyClient CreateEconomyClient()
+        {
+            if (config == null)
+            {
+                return SurvivalWorld.Economy.NullEconomyClient.Instance;
+            }
+
+            if (!EndpointParser.TryParse(config.EconomyGrpcEndpoint, out var endpoint))
+            {
+                Debug.LogWarning("Invalid Economy gRPC endpoint: " + config.EconomyGrpcEndpoint);
+                return SurvivalWorld.Economy.NullEconomyClient.Instance;
+            }
+
+            economyGrpcChannel = CreateGrpcChannel(endpoint, "Economy");
+            if (economyGrpcChannel == null)
+            {
+                return SurvivalWorld.Economy.NullEconomyClient.Instance;
+            }
+
+            var client = new EconomyService.EconomyServiceClient(economyGrpcChannel);
+            return new SurvivalWorld.Economy.GeneratedEconomyGrpcClient(client);
+        }
         private IWorldDataGateway CreateWorldDataGateway()
         {
             if (config == null)
@@ -500,15 +586,16 @@ namespace SurvivalWorld.Server
             lifetime = null;
 
             string serverId = config == null ? string.Empty : config.ServerId;
-            DrainAndShutdownAsync(serverId, matchmakingGateway, persistenceAgent, aiActorSystem, authGrpcChannel, worldDataGrpcChannel).Forget();
+            DrainAndShutdownAsync(serverId, matchmakingGateway, persistenceAgent, aiActorSystem, authGrpcChannel, worldDataGrpcChannel, economyGrpcChannel).Forget();
             authGrpcChannel = null;
             worldDataGrpcChannel = null;
+            economyGrpcChannel = null;
             persistenceAgent = null;
             aiActorSystem = null;
             inventoryRuntimeService = null;
         }
 
-        private static async UniTaskVoid DrainAndShutdownAsync(string serverId, IMatchmakingGateway gateway, RuntimePersistenceAgent persistenceAgent, AIActorSystem aiActorSystem, ChannelBase authChannel, ChannelBase worldDataChannel)
+        private static async UniTaskVoid DrainAndShutdownAsync(string serverId, IMatchmakingGateway gateway, RuntimePersistenceAgent persistenceAgent, AIActorSystem aiActorSystem, ChannelBase authChannel, ChannelBase worldDataChannel, ChannelBase economyChannel)
         {
             if (persistenceAgent != null)
             {
@@ -550,6 +637,7 @@ namespace SurvivalWorld.Server
 
             await ShutdownChannelAsync("Auth", authChannel);
             await ShutdownChannelAsync("WorldData", worldDataChannel);
+            await ShutdownChannelAsync("Economy", economyChannel);
         }
 
         private static async UniTask ShutdownChannelAsync(string label, ChannelBase channel)

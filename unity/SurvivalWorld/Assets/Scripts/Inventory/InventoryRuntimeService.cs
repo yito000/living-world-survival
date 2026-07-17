@@ -34,6 +34,18 @@ namespace SurvivalWorld.Inventory
             return inventoryService.ApplyCommand(owner, command);
         }
 
+        public InventoryMutationResult ApplyApiGrantedItems(string ownerType, string ownerId, string commandId, long expectedVersion, IEnumerable<ItemRef> grantedItems, IEnumerable<string> itemInstanceIds)
+        {
+            InventoryOwner owner = GetOrCreateOwner(ownerType, ownerId);
+            long resolvedVersion = expectedVersion < 0 ? owner.Version : expectedVersion;
+            return inventoryService.ApplyApiGrantedItems(owner, commandId, resolvedVersion, grantedItems, itemInstanceIds);
+        }
+
+        public InventorySnapshot ApplySnapshot(string ownerType, string ownerId, long version, IEnumerable<InventoryEntry> entries)
+        {
+            InventoryOwner owner = GetOrCreateOwner(ownerType, ownerId);
+            return inventoryService.ApplySnapshot(owner, version, entries);
+        }
         public InventorySnapshot RequestSnapshot(string ownerType, string ownerId)
         {
             return inventoryService.RequestSnapshot(GetOrCreateOwner(ownerType, ownerId));

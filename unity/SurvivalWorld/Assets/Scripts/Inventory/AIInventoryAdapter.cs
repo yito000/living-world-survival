@@ -1,3 +1,5 @@
+using System;
+using System.Globalization;
 using SurvivalWorld.Items;
 
 namespace SurvivalWorld.Inventory
@@ -5,8 +7,12 @@ namespace SurvivalWorld.Inventory
     public sealed class AIInventoryAdapter
     {
         private readonly InventoryService inventoryService;
+        private readonly InventoryRuntimeService runtimeService;
         private readonly InventoryOwner owner;
         private readonly IItemDefinitionCatalog catalog;
+        private readonly string ownerType;
+        private readonly string ownerId;
+        private int generatedCommandSequence;
 
         public AIInventoryAdapter(InventoryService inventoryService, InventoryOwner owner)
             : this(inventoryService, owner, null)
@@ -15,17 +21,39 @@ namespace SurvivalWorld.Inventory
 
         public AIInventoryAdapter(InventoryService inventoryService, InventoryOwner owner, IItemDefinitionCatalog catalog)
         {
-            this.inventoryService = inventoryService ?? throw new System.ArgumentNullException(nameof(inventoryService));
-            this.owner = owner ?? throw new System.ArgumentNullException(nameof(owner));
+            this.inventoryService = inventoryService ?? throw new ArgumentNullException(nameof(inventoryService));
+            this.owner = owner ?? throw new ArgumentNullException(nameof(owner));
+            this.catalog = catalog;
+            ownerType = owner.OwnerType;
+            ownerId = owner.OwnerId;
+        }
+
+        public AIInventoryAdapter(InventoryRuntimeService runtimeService, string ownerType, string ownerId, IItemDefinitionCatalog catalog)
+        {
+            this.runtimeService = runtimeService ?? throw new ArgumentNullException(nameof(runtimeService));
+            this.ownerType = string.IsNullOrWhiteSpace(ownerType) ? "ai" : ownerType;
+            this.ownerId = string.IsNullOrWhiteSpace(ownerId) ? "ai" : ownerId;
             this.catalog = catalog;
         }
 
         public int InventoryPressure { get; private set; }
         public InventoryOwner Owner => owner;
+        public string OwnerType => ownerType;
+        public string OwnerId => ownerId;
 
         public InventoryMutationResult AddLoot(string itemDefinitionId, int quantity)
         {
-            InventoryMutationResult result = inventoryService.AddItem(owner, itemDefinitionId, string.Empty, quantity);
+            InventoryMutationResult result;
+            if (runtimeService != null)
+            {
+                string commandId = "ai-loot:" + ownerId + ":" + (++generatedCommandSequence).ToString(CultureInfo.InvariantCulture);
+                result = runtimeService.AddItemCommand(ownerType, ownerId, commandId, -1, itemDefinitionId, string.Empty, quantity);
+            }
+            else
+            {
+                result = inventoryService.AddItem(owner, itemDefinitionId, string.Empty, quantity);
+            }
+
             if (!result.Success)
             {
                 InventoryPressure++;
@@ -36,7 +64,9 @@ namespace SurvivalWorld.Inventory
 
         public InventorySnapshot RequestSnapshot()
         {
-            return inventoryService.RequestSnapshot(owner);
+            return runtimeService != null
+                ? runtimeService.RequestSnapshot(ownerType, ownerId)
+                : inventoryService.RequestSnapshot(owner);
         }
 
         public AIInventorySummary GetSummary()
@@ -66,10 +96,12 @@ namespace SurvivalWorld.Inventory
                 }
             }
 
-            int capacity = System.Math.Max(0, owner.SlotCapacity);
+            int capacity = runtimeService != null
+                ? InventoryOwner.DefaultSlotCapacity
+                : Math.Max(0, owner.SlotCapacity);
             return new AIInventorySummary(
                 usedSlots,
-                System.Math.Max(0, capacity - usedSlots),
+                Math.Max(0, capacity - usedSlots),
                 capacity,
                 sellableCount,
                 netWorth);
@@ -123,7 +155,7 @@ namespace SurvivalWorld.Inventory
 
                 for (int tagIndex = 0; tagIndex < definition.Tags.Length; tagIndex++)
                 {
-                    if (string.Equals(definition.Tags[tagIndex], tag, System.StringComparison.Ordinal))
+                    if (string.Equals(definition.Tags[tagIndex], tag, StringComparison.Ordinal))
                     {
                         itemDefinitionId = entry.ItemDefinitionId;
                         return true;
@@ -144,9 +176,9 @@ namespace SurvivalWorld.Inventory
             for (int i = 0; i < definition.Tags.Length; i++)
             {
                 string tag = definition.Tags[i] ?? string.Empty;
-                if (tag.StartsWith("resource.", System.StringComparison.Ordinal) ||
-                    tag.StartsWith("material.", System.StringComparison.Ordinal) ||
-                    tag.StartsWith("weapon.", System.StringComparison.Ordinal))
+                if (tag.StartsWith("resource.", StringComparison.Ordinal) ||
+                    tag.StartsWith("material.", StringComparison.Ordinal) ||
+                    tag.StartsWith("weapon.", StringComparison.Ordinal))
                 {
                     return true;
                 }

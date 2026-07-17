@@ -39,18 +39,19 @@ namespace SurvivalWorld.Server.AI
 
         public IReadOnlyList<AIActorController> Actors => actors;
 
-        public static AIActorSystem CreateDefault(string serverId, string worldId, IItemDefinitionCatalog itemCatalog, IActorStateGateway actorStateGateway, IAIDecisionTransport decisionTransport = null)
+        public static AIActorSystem CreateDefault(string serverId, string worldId, IItemDefinitionCatalog itemCatalog, IActorStateGateway actorStateGateway, IAIDecisionTransport decisionTransport = null, InventoryRuntimeService sharedInventoryRuntime = null, SurvivalWorld.Economy.BuyerPurchaseHandler buyerPurchaseHandler = null)
         {
             ActionTemplateCatalog templateCatalog = new ActionTemplateCatalog(ActionTemplateDefinition.CreateM4Defaults());
             PrimitiveActionRegistry primitiveRegistry = PrimitiveActionRegistry.CreateM4Defaults();
             RegisterDefaultMutatingPrimitives(primitiveRegistry);
+            SurvivalWorld.Server.AI.Economy.PurchasePrimitive.Register(primitiveRegistry, buyerPurchaseHandler);
             var decisionClient = new AIDecisionClient(serverId, worldId, templateCatalog, decisionTransport ?? NullAIDecisionTransport.Instance, primitiveRegistry);
             var system = new AIActorSystem(templateCatalog, primitiveRegistry, new UtilityFallback(), decisionClient, new AIActorRuntimeStatePersistence(actorStateGateway, worldId));
-            system.SpawnActors(DefaultActorCount, itemCatalog, worldId, serverId == null ? 0 : serverId.GetHashCode());
+            system.SpawnActors(DefaultActorCount, itemCatalog, worldId, serverId == null ? 0 : serverId.GetHashCode(), sharedInventoryRuntime);
             return system;
         }
 
-        public void SpawnActors(int count, IItemDefinitionCatalog itemCatalog, string worldId, int seed)
+        public void SpawnActors(int count, IItemDefinitionCatalog itemCatalog, string worldId, int seed, InventoryRuntimeService sharedInventoryRuntime = null)
         {
             if (count <= 0)
             {
@@ -62,8 +63,16 @@ namespace SurvivalWorld.Server.AI
             for (int i = 0; i < count; i++)
             {
                 string actorId = "ai-" + (actors.Count + 1).ToString("00", System.Globalization.CultureInfo.InvariantCulture);
-                var owner = new InventoryOwner("ai", actorId, InventoryOwner.DefaultSlotCapacity, InventoryOwner.DefaultWeightCapacity, 0L);
-                var adapter = new AIInventoryAdapter(inventoryService, owner, catalog);
+                AIInventoryAdapter adapter;
+                if (sharedInventoryRuntime == null)
+                {
+                    var owner = new InventoryOwner("ai", actorId, InventoryOwner.DefaultSlotCapacity, InventoryOwner.DefaultWeightCapacity, 0L);
+                    adapter = new AIInventoryAdapter(inventoryService, owner, catalog);
+                }
+                else
+                {
+                    adapter = new AIInventoryAdapter(sharedInventoryRuntime, "ai", actorId, catalog);
+                }
                 SeedInventory(adapter, i, seed);
                 var actor = new AIActorController(actorId, adapter, registry);
                 actor.RefreshPersonalState(80f - (i % 5) * 12f, i % 4, 100L);

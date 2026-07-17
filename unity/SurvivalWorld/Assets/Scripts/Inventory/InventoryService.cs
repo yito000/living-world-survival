@@ -70,6 +70,60 @@ namespace SurvivalWorld.Inventory
             return result;
         }
 
+        public InventoryMutationResult ApplyApiGrantedItems(InventoryOwner owner, string commandId, long expectedVersion, IEnumerable<ItemRef> grantedItems, IEnumerable<string> itemInstanceIds)
+        {
+            if (owner == null)
+            {
+                throw new ArgumentNullException(nameof(owner));
+            }
+
+            if (string.IsNullOrWhiteSpace(commandId))
+            {
+                return InventoryMutationResult.Rejected(RequestSnapshot(owner), "Command id is required.");
+            }
+
+            Dictionary<string, InventoryMutationResult> ownerCommands = GetOwnerCommandResults(owner.OwnerId);
+            if (ownerCommands.TryGetValue(commandId, out InventoryMutationResult previous))
+            {
+                return InventoryMutationResult.Duplicate(previous.Snapshot);
+            }
+
+            if (expectedVersion >= 0 && expectedVersion != owner.Version)
+            {
+                return InventoryMutationResult.Conflict(RequestSnapshot(owner), "Inventory version conflict.");
+            }
+
+            List<ApiGrantedItem> grants = NormalizeApiGrants(grantedItems, itemInstanceIds);
+            if (grants.Count == 0)
+            {
+                return InventoryMutationResult.Rejected(RequestSnapshot(owner), "Granted items are empty.");
+            }
+
+            var simulated = new InventoryOwner(owner.OwnerType, owner.OwnerId, owner.SlotCapacity, owner.WeightCapacity, owner.Version);
+            simulated.Entries.AddRange(owner.Entries);
+            for (int i = 0; i < grants.Count; i++)
+            {
+                ApiGrantedItem grant = grants[i];
+                if (!catalog.TryGet(grant.ItemDefinitionId, out ItemDefinitionData definition))
+                {
+                    return InventoryMutationResult.Rejected(RequestSnapshot(owner), "Unknown item definition: " + grant.ItemDefinitionId);
+                }
+
+                string error;
+                if (!TryApplyAddWithoutVersion(simulated, definition, grant.ItemDefinitionId, grant.ItemInstanceId, 1, out error))
+                {
+                    return InventoryMutationResult.Rejected(RequestSnapshot(owner), error);
+                }
+            }
+
+            owner.Entries.Clear();
+            owner.Entries.AddRange(simulated.Entries);
+            owner.Version++;
+
+            InventoryMutationResult result = InventoryMutationResult.Ok(RequestSnapshot(owner), null);
+            ownerCommands[commandId] = result;
+            return result;
+        }
         private InventoryMutationResult AddItemInternal(InventoryOwner owner, string itemDefinitionId, string itemInstanceId, int quantity, string commandId, string eventType)
         {
             if (owner == null)
@@ -141,6 +195,22 @@ namespace SurvivalWorld.Inventory
             return InventoryMutationResult.Ok(RequestSnapshot(owner), domainEvent);
         }
 
+        public InventorySnapshot ApplySnapshot(InventoryOwner owner, long version, IEnumerable<InventoryEntry> entries)
+        {
+            if (owner == null)
+            {
+                throw new ArgumentNullException(nameof(owner));
+            }
+
+            owner.Entries.Clear();
+            if (entries != null)
+            {
+                owner.Entries.AddRange(entries);
+            }
+
+            owner.Version = Math.Max(0L, version);
+            return RequestSnapshot(owner);
+        }
         public InventoryMutationResult ApplyCommand(InventoryOwner owner, InventoryCommand command)
         {
             if (owner == null)
@@ -428,6 +498,104 @@ namespace SurvivalWorld.Inventory
             return requiredSlots <= freeSlots;
         }
 
+        private bool TryApplyAddWithoutVersion(InventoryOwner owner, ItemDefinitionData definition, string itemDefinitionId, string itemInstanceId, int quantity, out string error)
+        {
+            error = string.Empty;
+            if (quantity <= 0)
+            {
+                error = "Quantity must be positive.";
+                return false;
+            }
+
+            if (WouldExceedWeight(owner, definition, quantity))
+            {
+                error = "Inventory weight capacity exceeded.";
+                return false;
+            }
+
+            bool stackableInstance = string.IsNullOrWhiteSpace(itemInstanceId) && definition.StackLimit > 1;
+            if (!HasSlotCapacityForAdd(owner, definition, itemDefinitionId, itemInstanceId, quantity, stackableInstance))
+            {
+                error = "Inventory slot capacity exceeded.";
+                return false;
+            }
+
+            int remaining = quantity;
+            if (stackableInstance)
+            {
+                for (int i = 0; i < owner.Entries.Count && remaining > 0; i++)
+                {
+                    InventoryEntry entry = owner.Entries[i];
+                    if (!IsSameStack(entry, itemDefinitionId, string.Empty))
+                    {
+                        continue;
+                    }
+
+                    int availableSpace = Math.Max(0, definition.StackLimit - entry.Quantity);
+                    int moved = Math.Min(remaining, availableSpace);
+                    if (moved <= 0)
+                    {
+                        continue;
+                    }
+
+                    entry.Quantity += moved;
+                    owner.Entries[i] = entry;
+                    remaining -= moved;
+                }
+            }
+
+            while (remaining > 0)
+            {
+                int slot = FindFirstFreeSlot(owner);
+                if (slot < 0)
+                {
+                    error = "Inventory slot capacity exceeded.";
+                    return false;
+                }
+
+                int stackQuantity = stackableInstance ? Math.Min(remaining, definition.StackLimit) : 1;
+                owner.Entries.Add(new InventoryEntry(slot, itemDefinitionId, itemInstanceId, stackQuantity, 0));
+                remaining -= stackQuantity;
+            }
+
+            return true;
+        }
+
+        private static List<ApiGrantedItem> NormalizeApiGrants(IEnumerable<ItemRef> grantedItems, IEnumerable<string> itemInstanceIds)
+        {
+            var grants = new List<ApiGrantedItem>();
+            var instanceIds = new List<string>();
+            if (itemInstanceIds != null)
+            {
+                instanceIds.AddRange(itemInstanceIds);
+            }
+
+            if (grantedItems == null)
+            {
+                return grants;
+            }
+
+            int index = 0;
+            foreach (ItemRef item in grantedItems)
+            {
+                if (item == null || string.IsNullOrWhiteSpace(item.ItemDefinitionId))
+                {
+                    index++;
+                    continue;
+                }
+
+                string instanceId = item.ItemInstanceId ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(instanceId) && index < instanceIds.Count)
+                {
+                    instanceId = instanceIds[index] ?? string.Empty;
+                }
+
+                grants.Add(new ApiGrantedItem(item.ItemDefinitionId, instanceId));
+                index++;
+            }
+
+            return grants;
+        }
         private static bool IsSameStack(InventoryEntry entry, string itemDefinitionId, string itemInstanceId)
         {
             return string.Equals(entry.ItemDefinitionId, itemDefinitionId ?? string.Empty, StringComparison.Ordinal) &&
@@ -553,6 +721,17 @@ namespace SurvivalWorld.Inventory
         private static string Escape(string value)
         {
             return (value ?? string.Empty).Replace("\\", "\\\\").Replace("\"", "\\\"");
+        }
+        private readonly struct ApiGrantedItem
+        {
+            public ApiGrantedItem(string itemDefinitionId, string itemInstanceId)
+            {
+                ItemDefinitionId = itemDefinitionId ?? string.Empty;
+                ItemInstanceId = itemInstanceId ?? string.Empty;
+            }
+
+            public string ItemDefinitionId { get; }
+            public string ItemInstanceId { get; }
         }
     }
 }

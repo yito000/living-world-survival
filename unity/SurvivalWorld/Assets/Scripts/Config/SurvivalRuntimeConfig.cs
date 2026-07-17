@@ -29,6 +29,10 @@ namespace SurvivalWorld.Config
         [SerializeField] private int outboxFlushIntervalMilliseconds = 1000;
         [SerializeField] private int snapshotIntervalSeconds = 30;
 
+        [Header("Economy gRPC")]
+        [SerializeField] private string economyGrpcEndpoint = "127.0.0.1:9092";
+        [SerializeField] private string economyGrpcSharedSecret = string.Empty;
+
         [Header("NATS")]
         [SerializeField] private string natsUrl = "nats://127.0.0.1:4222";
 
@@ -59,6 +63,8 @@ namespace SurvivalWorld.Config
         public string WorldDataGrpcSharedSecret => worldDataGrpcSharedSecret;
         public int OutboxFlushIntervalMilliseconds => Mathf.Max(100, outboxFlushIntervalMilliseconds);
         public int SnapshotIntervalSeconds => Mathf.Max(1, snapshotIntervalSeconds);
+        public string EconomyGrpcEndpoint => economyGrpcEndpoint;
+        public string EconomyGrpcSharedSecret => economyGrpcSharedSecret;
         public string NatsUrl => natsUrl;
         public string JoinTicketPublicKey => joinTicketPublicKey;
         public bool DevLocalMode => devLocalMode;
