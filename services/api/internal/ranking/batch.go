@@ -63,11 +63,10 @@ func (b *Batch) Run(ctx context.Context) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	version, err := b.store.NextPriceVersion(ctx)
+	// SaveRanking allocates price_version inside its own tx: the mutex above only
+	// serializes runs within this process, not across apid replicas.
+	version, err := b.store.SaveRanking(ctx, entries)
 	if err != nil {
-		return Result{}, err
-	}
-	if err := b.store.SaveRanking(ctx, version, entries); err != nil {
 		return Result{}, err
 	}
 	return Result{PriceVersion: version, OwnerCount: len(entries)}, nil

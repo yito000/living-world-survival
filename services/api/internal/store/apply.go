@@ -276,7 +276,8 @@ func applyCleaning(ctx context.Context, tx pgx.Tx, worldID string, p *eventPaylo
 	if p.RewardAmount <= 0 || owner == "" {
 		return nil
 	}
-	return appendCurrencyTx(ctx, tx, owner, p.RewardAmount, "cleaning_reward")
+	_, err := appendCurrencyTx(ctx, tx, owner, p.RewardAmount, "cleaning_reward", nil)
+	return err
 }
 
 // --- inventory primitives (tx-scoped) --------------------------------------
@@ -522,23 +523,33 @@ func upsertBlueprintTx(ctx context.Context, tx pgx.Tx, worldID, blueprintID stri
 }
 
 // appendCurrencyTx appends a ledger entry, computing balance_after from the
-// owner's latest entry (BIGINT integer money, 13.1).
-func appendCurrencyTx(ctx context.Context, tx pgx.Tx, ownerID string, delta int64, reason string) error {
-	var prev int64
-	if err := tx.QueryRow(ctx,
-		`SELECT coalesce((
-		    SELECT balance_after FROM currency_ledger
-		     WHERE owner_id = $1 ORDER BY created_at DESC, entry_id DESC LIMIT 1), 0)`,
-		ownerID,
-	).Scan(&prev); err != nil {
-		return fmt.Errorf("store: currency balance: %w", err)
+// owner's latest entry (BIGINT integer money, 13.1), and returns the new
+// balance. correlationID is the causing purchase/sale id, or nil.
+//
+// This is the ONLY writer of currency_ledger — the M6 economy paths go through
+// it too. Because balance_after is derived from the previous row rather than
+// stored per owner, every writer must serialize on the same key or two txs read
+// the same balance and one update is silently lost. AppendEvents' world-scoped
+// lock is not enough (a purchase for the same owner runs under no world lock),
+// so the account lock is taken here, next to the read it protects (MVP-SEC-009).
+// It is re-entrant: callers already holding it (CommitPurchase/CommitSale) are
+// unaffected. Lock order is world → owner, and the economy paths take only the
+// owner lock, so the two writers cannot deadlock.
+func appendCurrencyTx(ctx context.Context, tx pgx.Tx, ownerID string, delta int64, reason string, correlationID *string) (int64, error) {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, ownerID); err != nil {
+		return 0, fmt.Errorf("store: account lock: %w", err)
 	}
+	prev, err := balanceTx(ctx, tx, ownerID)
+	if err != nil {
+		return 0, err
+	}
+	balanceAfter := prev + delta
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO currency_ledger (entry_id, owner_id, delta, balance_after, reason)
-		 VALUES ($1, $2, $3, $4, $5)`,
-		NewUUID(), ownerID, delta, prev+delta, reason,
+		`INSERT INTO currency_ledger (entry_id, owner_id, delta, balance_after, reason, correlation_id)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		NewUUID(), ownerID, delta, balanceAfter, reason, correlationID,
 	); err != nil {
-		return fmt.Errorf("store: insert currency ledger: %w", err)
+		return 0, fmt.Errorf("store: insert currency ledger: %w", err)
 	}
-	return nil
+	return balanceAfter, nil
 }

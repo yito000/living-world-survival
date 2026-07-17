@@ -590,6 +590,186 @@ func TestCommitSale(t *testing.T) {
 	}
 }
 
+// stackable（is_instance=false）の購入。個体を作らないため item_instance_ids は
+// 空配列で記録される必要がある（nil を渡すと TEXT[] NOT NULL 違反で購入が全滅する）。
+// rare_weapon_buyer_v1 は個体アイテムだけなので、必ず stackable を含む table で試す。
+func TestCommitPurchaseStackable(t *testing.T) {
+	h := economySetup(t)
+	worldID := h.newWorld(t)
+	resp, err := h.server.RegisterBuyer(context.Background(), &survivalv1.RegisterBuyerRequest{
+		IdempotencyKey:   "stack-" + store.NewUUID(),
+		WorldId:          worldID,
+		RegionId:         "region-1",
+		Seed:             3,
+		InventoryTableId: "general_goods_buyer_v1",
+		PriceModifierBp:  10000,
+		SpawnAtUnixMs:    1_700_000_000_000,
+		DespawnAtUnixMs:  1_700_000_600_000,
+	})
+	if err != nil {
+		t.Fatalf("RegisterBuyer: %v", err)
+	}
+	purchaser := store.NewUUID()
+	h.credit(t, purchaser, 1_000_000)
+
+	tried := 0
+	for _, e := range resp.GetStock() {
+		def, ok := h.catalog.Get(e.GetItemDefinitionId())
+		if !ok || def.IsInstance {
+			continue
+		}
+		tried++
+		got := h.purchase(t, "stk-"+store.NewUUID(), resp.GetBuyerInstanceId(),
+			e.GetStockEntryId(), purchaser, int64(tried-1))
+		if got.GetStatus() != survivalv1.PurchaseStatus_PURCHASE_STATUS_COMMITTED {
+			t.Fatalf("stackable %s の購入: got %v want COMMITTED", e.GetItemDefinitionId(), got.GetStatus())
+		}
+		if len(got.GetItemInstanceIds()) != 0 {
+			t.Errorf("stackable なのに個体が払い出された: %v", got.GetItemInstanceIds())
+		}
+		break
+	}
+	if tried == 0 {
+		t.Fatal("general_goods_buyer_v1 の seed 3 に stackable が無い: テストが無意味")
+	}
+}
+
+// 売却は「持っている個体」と「申告された item_definition_id」の一致を要求する。
+// 一致を見ないと、安い個体を渡して高い定義の sell_price を受け取れる（通貨増殖）。
+func TestCommitSaleRejectsInstanceDefinitionMismatch(t *testing.T) {
+	h := economySetup(t)
+	worldID := h.newWorld(t)
+	buyer := h.registerBuyer(t, worldID, 21)
+	seller := store.NewUUID()
+
+	// 安い個体（stone_spear）を 1 つ持たせる。
+	invID, err := h.store.EnsureInventory(context.Background(), "character", seller, 24, 40_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceID := store.NewUUID()
+	if _, err := h.pool.Exec(context.Background(),
+		`INSERT INTO item_instances (item_instance_id, definition_id) VALUES ($1, 'stone_spear')`,
+		instanceID); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpsertEntry(context.Background(), invID, store.EntryRow{
+		SlotIndex: 0, ItemDefinitionID: "stone_spear", ItemInstanceID: &instanceID, Quantity: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// その個体を「rare_weapon」と偽って売る。
+	resp, err := h.server.CommitSale(context.Background(), &survivalv1.CommitSaleRequest{
+		IdempotencyKey:  "mismatch-" + store.NewUUID(),
+		BuyerInstanceId: buyer.GetBuyerInstanceId(),
+		SellerId:        seller,
+		Items: []*survivalv1.ItemRef{
+			{ItemDefinitionId: "rare_weapon", ItemInstanceId: instanceID},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CommitSale: %v", err)
+	}
+	if resp.GetStatus() != survivalv1.ResultStatus_RESULT_STATUS_REJECTED {
+		t.Fatalf("定義を偽った売却: got %v want REJECTED（通貨増殖）", resp.GetStatus())
+	}
+	if got := h.balance(t, seller); got != 0 {
+		rare, _ := h.catalog.SellPrice("rare_weapon")
+		t.Errorf("偽装売却で入金された: %d（rare_weapon の sell_price=%d）", got, rare)
+	}
+	// 個体も消えていないこと。
+	var stillHeld bool
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT EXISTS(SELECT 1 FROM item_instances WHERE item_instance_id = $1)`,
+		instanceID).Scan(&stillHeld); err != nil {
+		t.Fatal(err)
+	}
+	if !stillHeld {
+		t.Error("拒否したのに個体が削除された")
+	}
+}
+
+// preparing / despawned の Buyer には売れない（購入と同じ lifecycle）。
+func TestCommitSaleRejectedWhenBuyerNotActive(t *testing.T) {
+	h := economySetup(t)
+	worldID := h.newWorld(t)
+	buyer := h.registerBuyer(t, worldID, 22)
+	seller := store.NewUUID()
+
+	invID, err := h.store.EnsureInventory(context.Background(), "character", seller, 24, 40_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.store.UpsertEntry(context.Background(), invID, store.EntryRow{
+		SlotIndex: 0, ItemDefinitionID: "cooked_meat", Quantity: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.server.DespawnBuyer(context.Background(), &survivalv1.DespawnBuyerRequest{
+		BuyerInstanceId: buyer.GetBuyerInstanceId(), TargetStatus: "PREPARING",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := h.server.CommitSale(context.Background(), &survivalv1.CommitSaleRequest{
+		IdempotencyKey:  "sale-" + store.NewUUID(),
+		BuyerInstanceId: buyer.GetBuyerInstanceId(),
+		SellerId:        seller,
+		Items:           []*survivalv1.ItemRef{{ItemDefinitionId: "cooked_meat"}},
+	})
+	if err != nil {
+		t.Fatalf("CommitSale: %v", err)
+	}
+	if resp.GetStatus() != survivalv1.ResultStatus_RESULT_STATUS_REJECTED {
+		t.Fatalf("preparing の Buyer への売却: got %v want REJECTED", resp.GetStatus())
+	}
+	if got := h.balance(t, seller); got != 0 {
+		t.Errorf("拒否したのに入金された: %d", got)
+	}
+}
+
+// despawned → preparing の逆行を許すと、締めた Buyer が再び取引を受けてしまう。
+func TestDespawnBuyerDoesNotRegress(t *testing.T) {
+	h := economySetup(t)
+	worldID := h.newWorld(t)
+	buyer := h.registerBuyer(t, worldID, 23)
+
+	for _, target := range []string{"PREPARING", "DESPAWNED"} {
+		if _, err := h.server.DespawnBuyer(context.Background(), &survivalv1.DespawnBuyerRequest{
+			BuyerInstanceId: buyer.GetBuyerInstanceId(), TargetStatus: target,
+		}); err != nil {
+			t.Fatalf("DespawnBuyer(%s): %v", target, err)
+		}
+	}
+	// DS の再送/順序逆転で PREPARING が後から届いても despawned のまま。
+	if _, err := h.server.DespawnBuyer(context.Background(), &survivalv1.DespawnBuyerRequest{
+		BuyerInstanceId: buyer.GetBuyerInstanceId(), TargetStatus: "PREPARING",
+	}); err != nil {
+		t.Fatalf("DespawnBuyer(遅延PREPARING): %v", err)
+	}
+	var status string
+	if err := h.pool.QueryRow(context.Background(),
+		`SELECT status FROM buyer_instances WHERE buyer_instance_id = $1`,
+		buyer.GetBuyerInstanceId()).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "despawned" {
+		t.Errorf("status が %q に逆行した（want despawned）", status)
+	}
+	// buyer_despawned は 1 度だけ。
+	events := h.economyEvents(t, worldID)
+	despawned := 0
+	for _, e := range events {
+		if e["type"] == "buyer_despawned" {
+			despawned++
+		}
+	}
+	if despawned != 1 {
+		t.Errorf("buyer_despawned が %d 回発行された（want 1）", despawned)
+	}
+}
+
 // 所有していない物は売れない（在庫・台帳を動かさない）。
 func TestCommitSaleRejectsUnownedItem(t *testing.T) {
 	h := economySetup(t)
@@ -707,11 +887,8 @@ func TestRankingBatchComputesNetWorth(t *testing.T) {
 	}
 
 	// price_version / calculated_at 付きで保存されること。
-	version, err := h.store.NextPriceVersion(context.Background())
+	version, err := h.store.SaveRanking(context.Background(), entries)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if err := h.store.SaveRanking(context.Background(), version, entries); err != nil {
 		t.Fatalf("SaveRanking: %v", err)
 	}
 	var savedWorth int64
@@ -730,7 +907,7 @@ func TestRankingBatchComputesNetWorth(t *testing.T) {
 	}
 
 	// 次の実行は price_version が単調増加する（世代管理）。
-	next, err := h.store.NextPriceVersion(context.Background())
+	next, err := h.store.SaveRanking(context.Background(), entries)
 	if err != nil {
 		t.Fatal(err)
 	}

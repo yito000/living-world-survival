@@ -191,13 +191,29 @@ func (s *Store) DespawnBuyer(ctx context.Context, buyerInstanceID, targetStatus 
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // best-effort on non-committed tx
 
+	// lifecycle は active → preparing → despawned の一方向のみ。DS の再送や順序逆転で
+	// 締めた Buyer が preparing に戻ると、以降も売買を受け続けてしまう。
+	// 逆行/現状維持は UPDATE が 0 行になり、buyer_despawned の二重発行も防ぐ。
 	var worldID string
 	err = tx.QueryRow(ctx,
-		`UPDATE buyer_instances SET status = $2 WHERE buyer_instance_id = $1 RETURNING world_id`,
-		buyerInstanceID, targetStatus,
+		`UPDATE buyer_instances SET status = $2
+		  WHERE buyer_instance_id = $1 AND status <> $2 AND status <> $3
+		 RETURNING world_id`,
+		buyerInstanceID, targetStatus, BuyerStatusDespawned,
 	).Scan(&worldID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
+		// 行が無い or 遷移が不許可。存在するなら「既にその状態」＝冪等成功とする。
+		var exists bool
+		if err := tx.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM buyer_instances WHERE buyer_instance_id = $1)`,
+			buyerInstanceID,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("store: despawn buyer lookup: %w", err)
+		}
+		if !exists {
+			return ErrNotFound
+		}
+		return tx.Commit(ctx)
 	}
 	if err != nil {
 		return fmt.Errorf("store: despawn buyer: %w", err)
@@ -280,14 +296,16 @@ func (s *Store) CommitPurchase(ctx context.Context, in PurchaseInput) (PurchaseR
 		buyerStatus string
 		worldID     string
 	)
+	// stock_entry_id と buyer_instance_id の組で引く。組で照合しないと、別 Buyer の
+	// 在庫を減らしつつ台帳/イベントには要求された buyer_instance_id を書いてしまう。
 	err = tx.QueryRow(ctx,
 		`SELECT bs.remaining_quantity, bs.unit_price, bs.item_definition_id, bs.version,
 		        bi.status, bi.world_id
 		   FROM buyer_stock bs
 		   JOIN buyer_instances bi ON bi.buyer_instance_id = bs.buyer_instance_id
-		  WHERE bs.stock_entry_id = $1
+		  WHERE bs.stock_entry_id = $1 AND bs.buyer_instance_id = $2
 		    FOR UPDATE OF bs`,
-		in.StockEntryID,
+		in.StockEntryID, in.BuyerInstanceID,
 	).Scan(&remaining, &unitPrice, &itemDefID, &stockVer, &buyerStatus, &worldID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PurchaseResult{Outcome: PurchaseRejected}, nil
@@ -352,18 +370,16 @@ func (s *Store) CommitPurchase(ctx context.Context, in PurchaseInput) (PurchaseR
 		return PurchaseResult{Outcome: PurchaseOutOfStock}, nil
 	}
 
-	// 5) 通貨台帳。
+	// 5) 通貨台帳（唯一の Writer 経由。口座ロックは冒頭で取得済み）。
 	purchaseID := NewUUID()
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO currency_ledger (entry_id, owner_id, delta, balance_after, reason, correlation_id)
-		 VALUES ($1, $2, $3, $4, 'purchase', $5)`,
-		NewUUID(), in.PurchaserID, -unitPrice, balance-unitPrice, purchaseID,
-	); err != nil {
-		return PurchaseResult{}, fmt.Errorf("store: insert ledger: %w", err)
+	if _, err := appendCurrencyTx(ctx, tx, in.PurchaserID, -unitPrice, "purchase", &purchaseID); err != nil {
+		return PurchaseResult{}, err
 	}
 
 	// 6/7) Item 個体生成 + インベントリ確定（永続 Writer=API）。
-	var instanceIDs []string
+	// stackable では個体を作らないが、nil スライスは TEXT[] へ NULL として入り
+	// item_instance_ids の NOT NULL に違反する（apply.go の world_items.tags と同じ罠）。
+	instanceIDs := []string{}
 	if def.IsInstance {
 		instanceID := NewUUID()
 		if err := addInstanceTx(ctx, tx, invID, itemStack{
@@ -451,10 +467,13 @@ func replayPurchaseTx(ctx context.Context, tx pgx.Tx, key string) (PurchaseResul
 		invVersion  int64
 		st          string
 	)
+	// 売却は同じ purchase_transactions / 同じ idempotency_key UNIQUE を共有するので、
+	// status で購入行に限定する。限定しないと、鍵が衝突した売却行を購入のリプレイとして
+	// 返し、在庫を動かさないまま「購入済み」と応答してしまう。
 	err := tx.QueryRow(ctx,
 		`SELECT amount, item_instance_ids, granted_definition_ids, new_inventory_version, status
-		   FROM purchase_transactions WHERE idempotency_key = $1`,
-		key,
+		   FROM purchase_transactions WHERE idempotency_key = $1 AND status <> $2`,
+		key, saleStatus,
 	).Scan(&amount, &instanceIDs, &grantedDefs, &invVersion, &st)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PurchaseResult{}, false, nil
@@ -546,34 +565,26 @@ func (s *Store) CommitSale(ctx context.Context, in SaleInput) (SaleResult, error
 		return SaleResult{}, fmt.Errorf("store: seller lock: %w", err)
 	}
 
-	// 冪等チェック。
-	var (
-		prevAmount     int64
-		prevInvVersion int64
-	)
-	err = tx.QueryRow(ctx,
-		`SELECT amount, new_inventory_version FROM purchase_transactions WHERE idempotency_key = $1`,
-		in.IdempotencyKey,
-	).Scan(&prevAmount, &prevInvVersion)
-	if err == nil {
-		return SaleResult{
-			Outcome:             SaleDuplicate,
-			Proceeds:            prevAmount,
-			NewInventoryVersion: prevInvVersion,
-		}, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return SaleResult{}, fmt.Errorf("store: sale replay: %w", err)
+	// 冪等チェック（購入行と鍵空間を共有するため status='sale' に限定する）。
+	if res, ok, err := replaySaleTx(ctx, tx, in.IdempotencyKey); err != nil {
+		return SaleResult{}, err
+	} else if ok {
+		return res, nil
 	}
 
-	var worldID string
+	var worldID, buyerStatus string
 	if err := tx.QueryRow(ctx,
-		`SELECT world_id FROM buyer_instances WHERE buyer_instance_id = $1`, in.BuyerInstanceID,
-	).Scan(&worldID); err != nil {
+		`SELECT world_id, status FROM buyer_instances WHERE buyer_instance_id = $1`, in.BuyerInstanceID,
+	).Scan(&worldID, &buyerStatus); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return SaleResult{Outcome: SaleRejected}, nil
 		}
 		return SaleResult{}, fmt.Errorf("store: sale buyer lookup: %w", err)
+	}
+	// 購入と同じ lifecycle を売却にも課す: preparing 以降の Buyer は新規取引を受けない。
+	// これが無いと、DS 上から消えた Buyer に売り続けられる（09B 3.3）。
+	if buyerStatus != BuyerStatusActive {
+		return SaleResult{Outcome: SaleRejected}, nil
 	}
 
 	invID, err := ensureInventoryTx(ctx, tx, in.SellerID)
@@ -615,17 +626,9 @@ func (s *Store) CommitSale(ctx context.Context, in SaleInput) (SaleResult, error
 		defIDs = append(defIDs, it.ItemDefinitionID)
 	}
 
-	balance, err := balanceTx(ctx, tx, in.SellerID)
-	if err != nil {
-		return SaleResult{}, err
-	}
 	saleID := NewUUID()
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO currency_ledger (entry_id, owner_id, delta, balance_after, reason, correlation_id)
-		 VALUES ($1, $2, $3, $4, 'sale', $5)`,
-		NewUUID(), in.SellerID, proceeds, balance+proceeds, saleID,
-	); err != nil {
-		return SaleResult{}, fmt.Errorf("store: insert sale ledger: %w", err)
+	if _, err := appendCurrencyTx(ctx, tx, in.SellerID, proceeds, "sale", &saleID); err != nil {
+		return SaleResult{}, err
 	}
 	if err := bumpInventoryVersionTx(ctx, tx, invID); err != nil {
 		return SaleResult{}, err
@@ -641,8 +644,11 @@ func (s *Store) CommitSale(ctx context.Context, in SaleInput) (SaleResult, error
 		saleStatus, defIDs, newInvVersion,
 	); err != nil {
 		if isUniqueViolation(err) {
-			// 並行同一キー: 先行が確定済み。こちらは捨てる。
-			return SaleResult{Outcome: SaleDuplicate}, nil
+			// 並行同一キー: 先行が確定済み。こちらの変更を捨ててロックを解放してから、
+			// 保存済みの結果を読み直して返す。0 を返すと DS が inventory version を
+			// 0 で上書きし、以後の version 条件購入が全て REJECTED になる。
+			_ = tx.Rollback(ctx)
+			return s.replayCommittedSale(ctx, in.IdempotencyKey)
 		}
 		return SaleResult{}, fmt.Errorf("store: insert sale: %w", err)
 	}
@@ -667,15 +673,66 @@ func (s *Store) CommitSale(ctx context.Context, in SaleInput) (SaleResult, error
 	return SaleResult{Outcome: SaleOK, Proceeds: proceeds, NewInventoryVersion: newInvVersion}, nil
 }
 
+// replaySaleTx returns the stored result for a already-committed sale with key.
+// It matches only status='sale' rows, since purchases share the same
+// idempotency_key UNIQUE constraint (09B 3.7).
+func replaySaleTx(ctx context.Context, tx pgx.Tx, key string) (SaleResult, bool, error) {
+	var amount, invVersion int64
+	err := tx.QueryRow(ctx,
+		`SELECT amount, new_inventory_version FROM purchase_transactions
+		  WHERE idempotency_key = $1 AND status = $2`,
+		key, saleStatus,
+	).Scan(&amount, &invVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SaleResult{}, false, nil
+	}
+	if err != nil {
+		return SaleResult{}, false, fmt.Errorf("store: sale replay: %w", err)
+	}
+	return SaleResult{
+		Outcome:             SaleDuplicate,
+		Proceeds:            amount,
+		NewInventoryVersion: invVersion,
+	}, true, nil
+}
+
+// replayCommittedSale re-reads a concurrently committed sale in a fresh
+// transaction, after the caller's has been rolled back.
+func (s *Store) replayCommittedSale(ctx context.Context, key string) (SaleResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return SaleResult{}, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // read-only
+	res, ok, err := replaySaleTx(ctx, tx, key)
+	if err != nil {
+		return SaleResult{}, err
+	}
+	if !ok {
+		// 鍵は取られているが sale 行が無い＝購入が同じ鍵を使っている（または先行が
+		// ロールバック済み）。二重確定を避けて拒否する。
+		return SaleResult{Outcome: SaleRejected}, nil
+	}
+	return res, nil
+}
+
 // holdsItemTx reports whether the inventory actually holds the item being sold.
+//
+// The instance branch must also pin item_definition_id: the sale is priced from
+// the caller-supplied definition, so accepting an instance whose real definition
+// differs would let a seller hand over a cheap item and be paid for an expensive
+// one — minting currency (MVP-SEC-006). The definition is checked against
+// item_instances (the authoritative individual), not the entry alone.
 func holdsItemTx(ctx context.Context, tx pgx.Tx, invID string, it SaleItem) (bool, error) {
 	var held bool
 	var err error
 	if it.ItemInstanceID != "" {
 		err = tx.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM inventory_entries
-			   WHERE inventory_id = $1 AND item_instance_id = $2)`,
-			invID, it.ItemInstanceID,
+			`SELECT EXISTS(SELECT 1 FROM inventory_entries e
+			   JOIN item_instances i ON i.item_instance_id = e.item_instance_id
+			  WHERE e.inventory_id = $1 AND e.item_instance_id = $2
+			    AND i.definition_id = $3)`,
+			invID, it.ItemInstanceID, it.ItemDefinitionID,
 		).Scan(&held)
 	} else {
 		err = tx.QueryRow(ctx,

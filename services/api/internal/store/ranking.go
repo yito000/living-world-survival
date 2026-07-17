@@ -67,38 +67,46 @@ func (s *Store) ComputeNetWorth(ctx context.Context) ([]OwnerNetWorth, error) {
 	return out, rows.Err()
 }
 
-// SaveRanking writes one ranking run: every row shares priceVersion and
-// calculated_at defaults to now(). Past runs are kept as generations (12.3).
-func (s *Store) SaveRanking(ctx context.Context, priceVersion int64, entries []OwnerNetWorth) error {
-	if len(entries) == 0 {
-		return nil
-	}
+// rankingLockKey serializes price_version allocation across processes. The
+// batch's in-process mutex only guards one apid, so two replicas (or a ticker
+// overlapping an admin run) would otherwise both read the same max and write two
+// different generations under one price_version — asset_rankings has no
+// (owner_id, price_version) unique constraint, so each owner would appear twice
+// in that generation with different net_worth values.
+const rankingLockKey = "asset_rankings:price_version"
+
+// SaveRanking writes one ranking run in a single transaction, allocating the
+// run's price_version inside it, and returns the version used. Every row shares
+// that version and calculated_at defaults to now(); past runs are kept as
+// generations (12.3).
+func (s *Store) SaveRanking(ctx context.Context, entries []OwnerNetWorth) (int64, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // best-effort on non-committed tx
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, rankingLockKey); err != nil {
+		return 0, fmt.Errorf("store: ranking lock: %w", err)
+	}
+	var version int64
+	if err := tx.QueryRow(ctx,
+		`SELECT coalesce(max(price_version), 0) + 1 FROM asset_rankings`,
+	).Scan(&version); err != nil {
+		return 0, fmt.Errorf("store: next price version: %w", err)
+	}
 
 	for _, e := range entries {
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO asset_rankings (rank_id, owner_id, net_worth, price_version)
 			 VALUES ($1, $2, $3, $4)`,
-			NewUUID(), e.OwnerID, e.NetWorth, priceVersion,
+			NewUUID(), e.OwnerID, e.NetWorth, version,
 		); err != nil {
-			return fmt.Errorf("store: insert ranking: %w", err)
+			return 0, fmt.Errorf("store: insert ranking: %w", err)
 		}
 	}
-	return tx.Commit(ctx)
-}
-
-// NextPriceVersion returns the next monotonically increasing run version — the
-// version of the price table the run valued items at (12.3).
-func (s *Store) NextPriceVersion(ctx context.Context) (int64, error) {
-	var v int64
-	if err := s.pool.QueryRow(ctx,
-		`SELECT coalesce(max(price_version), 0) + 1 FROM asset_rankings`,
-	).Scan(&v); err != nil {
-		return 0, fmt.Errorf("store: next price version: %w", err)
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
 	}
-	return v, nil
+	return version, nil
 }
