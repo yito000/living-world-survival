@@ -9,12 +9,18 @@ using FishNet.Object;
 using FishNet.Transporting;
 using Grpc.Core;
 using Survival.V1;
+using SurvivalWorld.Client.Interaction;
 using SurvivalWorld.Config;
 using SurvivalWorld.Dev;
 using SurvivalWorld.Inventory;
 using SurvivalWorld.Items;
 using SurvivalWorld.Net;
 using SurvivalWorld.Server.AI;
+using SurvivalWorld.Server.Combat;
+using SurvivalWorld.Server.Handlers;
+using SurvivalWorld.Server.Inventory;
+using SurvivalWorld.Server.Simulation;
+using SurvivalWorld.Shared.Events;
 using SurvivalWorld.Shared.MasterData;
 using SurvivalWorld.World;
 using UnityEngine;
@@ -45,6 +51,19 @@ namespace SurvivalWorld.Server
         private SurvivalWorld.Economy.BuyerPurchaseHandler buyerPurchaseHandler;
         private SurvivalWorld.Economy.BuyerSpawnController buyerSpawnController;
         private AIActorSystem aiActorSystem;
+        private InteractionCommandHandler interactionCommandHandler;
+        private PrimaryActionCommandHandler primaryActionCommandHandler;
+        private M3InventoryService m3InventoryService;
+        private ResourceNodeSystem resourceNodeSystem;
+        private StationJobSystem stationJobSystem;
+        private FarmPlotSystem farmPlotSystem;
+        private HuntingSystem huntingSystem;
+        private CleaningSystem cleaningSystem;
+        private readonly Dictionary<string, InventoryOwner> playtestInventoryOwners = new Dictionary<string, InventoryOwner>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ResourceNodeState> playtestResourceNodes = new Dictionary<string, ResourceNodeState>(StringComparer.Ordinal);
+        private readonly Dictionary<string, StationState> playtestStations = new Dictionary<string, StationState>(StringComparer.Ordinal);
+        private readonly Dictionary<string, FarmPlotState> playtestFarmPlots = new Dictionary<string, FarmPlotState>(StringComparer.Ordinal);
+        private readonly Dictionary<uint, AnimalState> playtestAnimals = new Dictionary<uint, AnimalState>();
         private bool serverBootstrapActive;
 
         private void Awake()
@@ -208,6 +227,9 @@ namespace SurvivalWorld.Server
                         cancellationToken).Forget();
                 }
 
+                PlaytestScenarioSeeder.EnsureSeededForCurrentScene();
+                RegisterSceneInteractionTargets();
+
                 MatchmakingGatewayResult register = await matchmakingGateway.RegisterServerAsync(config.ServerId, config.WorldId, config.BuildId, config.ServerEndpoint, config.ServerCapacity, cancellationToken);
                 if (!register.Ok)
                 {
@@ -240,6 +262,7 @@ namespace SurvivalWorld.Server
                 if (config != null && config.DevLocalMode)
                 {
                     ConfigureInventoryRuntime(NullInventoryEventSink.Instance);
+                    ConfigurePlaytestInteractionRuntime(NullInventoryEventSink.Instance);
                     ConfigureEconomyRuntime();
                     ConfigureAIActorSystem(NullActorStateGateway.Instance);
                     return WorldBootstrapResult.Success(0, 0);
@@ -254,6 +277,7 @@ namespace SurvivalWorld.Server
             {
                 persistenceAgent = new RuntimePersistenceAgent(worldDataGateway, worldRuntimeState, config.ServerId, config.WorldId);
                 ConfigureInventoryRuntime(persistenceAgent);
+                ConfigurePlaytestInteractionRuntime(persistenceAgent);
                 ConfigureEconomyRuntime();
                 ConfigureAIActorSystem(CreateActorStateGateway());
             }
@@ -265,6 +289,27 @@ namespace SurvivalWorld.Server
         {
             string configuredWorldId = config == null ? string.Empty : config.WorldId;
             inventoryRuntimeService = new InventoryRuntimeService(ItemDefinitionCatalog.CreateMvpCatalog(), eventSink ?? NullInventoryEventSink.Instance, configuredWorldId);
+        }
+
+        private void ConfigurePlaytestInteractionRuntime(IInventoryEventSink eventSink)
+        {
+            MasterDataStore masterData = MasterDataStore.CreateM3Defaults();
+            m3InventoryService = new M3InventoryService(M3ItemDefinitions.CreateCatalog());
+            string worldId = config == null ? "world-m8a" : config.WorldId;
+            var factory = new DomainEventFactory(worldId);
+            IInventoryEventSink sink = eventSink ?? NullInventoryEventSink.Instance;
+            resourceNodeSystem = new ResourceNodeSystem(masterData, m3InventoryService, factory, sink);
+            stationJobSystem = new StationJobSystem(masterData, m3InventoryService, factory, sink);
+            farmPlotSystem = new FarmPlotSystem(m3InventoryService, factory, sink);
+            huntingSystem = new HuntingSystem(masterData, m3InventoryService, new DamageService(), factory, sink);
+            cleaningSystem = new CleaningSystem(m3InventoryService, factory, sink);
+            interactionCommandHandler = new InteractionCommandHandler();
+            primaryActionCommandHandler = new PrimaryActionCommandHandler(huntingSystem);
+            playtestInventoryOwners.Clear();
+            playtestResourceNodes.Clear();
+            playtestStations.Clear();
+            playtestFarmPlots.Clear();
+            playtestAnimals.Clear();
         }
 
 
@@ -305,6 +350,314 @@ namespace SurvivalWorld.Server
             return string.IsNullOrWhiteSpace(natsUrl)
                 ? NullAIDecisionTransport.Instance
                 : new CoreNatsAIDecisionTransport(natsUrl);
+        }
+        private void RegisterSceneInteractionTargets()
+        {
+            if (interactionCommandHandler == null)
+            {
+                return;
+            }
+
+            PlaytestScenarioSeeder.EnsureSeededForCurrentScene();
+            InteractableTargetView[] views = FindObjectsByType<InteractableTargetView>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < views.Length; i++)
+            {
+                RegisterInteractionTarget(views[i]);
+            }
+        }
+
+        private void RegisterInteractionTarget(InteractableTargetView view)
+        {
+            if (view == null)
+            {
+                return;
+            }
+
+            uint id = view.ResolveTargetNetworkId();
+            if (id == 0)
+            {
+                return;
+            }
+
+            var target = new InteractionTarget();
+            switch (view.Kind)
+            {
+                case InteractionKind.Mine:
+                    target.ResourceNodeSystem = resourceNodeSystem;
+                    target.ResourceNode = GetOrCreateResourceNode(view);
+                    break;
+                case InteractionKind.StationCraft:
+                case InteractionKind.StationCancel:
+                    target.StationJobSystem = stationJobSystem;
+                    target.Station = GetOrCreateStation(view);
+                    break;
+                case InteractionKind.FarmPlant:
+                case InteractionKind.FarmHarvest:
+                    target.FarmPlotSystem = farmPlotSystem;
+                    target.FarmPlot = GetOrCreateFarmPlot(view);
+                    break;
+                case InteractionKind.Clean:
+                    target.CleaningSystem = cleaningSystem;
+                    target.WorldItemId = view.ServerStateId;
+                    if (cleaningSystem != null)
+                    {
+                        cleaningSystem.RegisterWorldItem(new WorldItemState(view.ServerStateId, "food_waste", 1, view.transform.position, true));
+                    }
+                    break;
+                case InteractionKind.Butcher:
+                    RegisterCarcassTarget(view, string.Empty);
+                    return;
+                case InteractionKind.Animal:
+                    GetOrCreateAnimal(id, view);
+                    return;
+                default:
+                    return;
+            }
+
+            interactionCommandHandler.RegisterTarget(id, target);
+        }
+
+        private ResourceNodeState GetOrCreateResourceNode(InteractableTargetView view)
+        {
+            string key = view.ServerStateId;
+            if (!playtestResourceNodes.TryGetValue(key, out ResourceNodeState node))
+            {
+                node = new ResourceNodeState(key, view.ResourceType, view.transform.position, view.MaximumAmount);
+                playtestResourceNodes[key] = node;
+            }
+            node.Position = view.transform.position;
+            return node;
+        }
+
+        private StationState GetOrCreateStation(InteractableTargetView view)
+        {
+            string key = view.ServerStateId;
+            if (!playtestStations.TryGetValue(key, out StationState station))
+            {
+                station = new StationState(key, view.StationType);
+                playtestStations[key] = station;
+            }
+            return station;
+        }
+
+        private FarmPlotState GetOrCreateFarmPlot(InteractableTargetView view)
+        {
+            string key = view.ServerStateId;
+            if (!playtestFarmPlots.TryGetValue(key, out FarmPlotState plot))
+            {
+                plot = new FarmPlotState(key);
+                playtestFarmPlots[key] = plot;
+            }
+            return plot;
+        }
+
+        private AnimalState GetOrCreateAnimal(uint id, InteractableTargetView view)
+        {
+            if (!playtestAnimals.TryGetValue(id, out AnimalState animal))
+            {
+                animal = new AnimalState(view.ServerStateId, "deer", 70f);
+                playtestAnimals[id] = animal;
+            }
+            return animal;
+        }
+
+        private void RegisterCarcassTarget(InteractableTargetView view, string carcassId)
+        {
+            if (view == null || huntingSystem == null || interactionCommandHandler == null)
+            {
+                return;
+            }
+
+            string resolvedCarcassId = string.IsNullOrWhiteSpace(carcassId) ? view.ServerStateId : carcassId;
+            if (!huntingSystem.Carcasses.ContainsKey(resolvedCarcassId))
+            {
+                return;
+            }
+
+            interactionCommandHandler.RegisterTarget(view.ResolveTargetNetworkId(), new InteractionTarget
+            {
+                HuntingSystem = huntingSystem,
+                CarcassId = resolvedCarcassId
+            });
+        }
+
+        private void RegisterCarcassTargets(string carcassId)
+        {
+            if (string.IsNullOrWhiteSpace(carcassId))
+            {
+                return;
+            }
+
+            InteractableTargetView[] views = FindObjectsByType<InteractableTargetView>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            for (int i = 0; i < views.Length; i++)
+            {
+                if (views[i] != null && views[i].Kind == InteractionKind.Butcher)
+                {
+                    RegisterCarcassTarget(views[i], carcassId);
+                }
+            }
+        }
+        public bool TryApplyInteractCommand(NetworkConnection connection, InteractCommand command, out M3CommandResult result)
+        {
+            result = M3CommandResult.Rejected("Rejected before interaction.");
+            if (!CanAcceptPlaytestCommand(connection) || command == null || interactionCommandHandler == null)
+            {
+                return false;
+            }
+
+            RegisterSceneInteractionTargets();
+            InteractionActorContext actor = CreateInteractionActorContext(connection);
+            result = interactionCommandHandler.Handle(command, actor, UnixNowMs());
+            string error = string.IsNullOrWhiteSpace(result.Error) ? string.Empty : ", error=" + result.Error;
+            Debug.Log("Interact command applied: connection=" + connection.ClientId + ", type=" + command.InteractionType + ", success=" + result.Success + error);
+            return true;
+        }
+
+        public bool TryApplyPrimaryActionCommand(NetworkConnection connection, PrimaryActionCommand command, out HuntingAttackResult result)
+        {
+            result = HuntingAttackResult.Rejected("Rejected before primary action.");
+            if (!CanAcceptPlaytestCommand(connection) || command == null || primaryActionCommandHandler == null)
+            {
+                return false;
+            }
+
+            RegisterSceneInteractionTargets();
+            if (!TryResolvePrimaryActionTarget(command, out AnimalState animal, out string error))
+            {
+                result = HuntingAttackResult.Rejected(error);
+                return true;
+            }
+
+            result = primaryActionCommandHandler.Handle(command, InventoryOwnerId(connection), CombatantType.Player, animal, UnixNowMs());
+            if (result.Killed)
+            {
+                RegisterCarcassTargets(result.CarcassId);
+            }
+
+            return true;
+        }
+
+        private bool CanAcceptPlaytestCommand(NetworkConnection connection)
+        {
+            if (connection == null || !connection.IsAuthenticated || !authenticatedClientIds.Contains(connection.ClientId))
+            {
+                Debug.LogWarning("Rejected playtest command from unauthenticated connection.");
+                return false;
+            }
+
+            if (m3InventoryService == null || interactionCommandHandler == null)
+            {
+                Debug.LogWarning("Rejected playtest command because M3 playtest runtime is not ready.");
+                return false;
+            }
+
+            return true;
+        }
+        private InteractionActorContext CreateInteractionActorContext(NetworkConnection connection)
+        {
+            InventoryOwner owner = GetOrCreatePlaytestInventoryOwner(connection);
+            Vector3 position = Vector3.zero;
+            if (spawnedPlayers.TryGetValue(connection.ClientId, out NetworkObject player) && player != null)
+            {
+                position = player.transform.position;
+            }
+
+            return new InteractionActorContext
+            {
+                ActorId = InventoryOwnerId(connection),
+                Inventory = owner,
+                Position = position,
+                HasLineOfSight = true,
+                ToolTags = ResolveToolTags(owner),
+                ToolQuality = 1,
+                DropSeed = Math.Max(1, connection.ClientId)
+            };
+        }
+
+        private InventoryOwner GetOrCreatePlaytestInventoryOwner(NetworkConnection connection)
+        {
+            string ownerId = InventoryOwnerId(connection);
+            if (!playtestInventoryOwners.TryGetValue(ownerId, out InventoryOwner owner))
+            {
+                owner = new InventoryOwner("player", ownerId, InventoryOwner.DefaultSlotCapacity, InventoryOwner.DefaultWeightCapacity, 0L);
+                playtestInventoryOwners[ownerId] = owner;
+                SeedPlaytestInventory(owner);
+            }
+            return owner;
+        }
+
+        private void SeedPlaytestInventory(InventoryOwner owner)
+        {
+            if (m3InventoryService == null || owner == null || owner.Entries.Count > 0)
+            {
+                return;
+            }
+
+            m3InventoryService.Grant(owner, new ItemStack("stone_pickaxe", 1));
+            m3InventoryService.Grant(owner, new ItemStack("stone", 5));
+            m3InventoryService.Grant(owner, new ItemStack("wood", 3));
+            m3InventoryService.Grant(owner, new ItemStack("raw_meat", 1));
+            m3InventoryService.Grant(owner, new ItemStack("food_waste", 1));
+        }
+
+        private string[] ResolveToolTags(InventoryOwner owner)
+        {
+            if (m3InventoryService != null && m3InventoryService.CountAvailable(owner, "stone_pickaxe") > 0)
+            {
+                return new[] { "tool.mining" };
+            }
+
+            return Array.Empty<string>();
+        }
+
+        private bool TryResolvePrimaryActionTarget(PrimaryActionCommand command, out AnimalState animal, out string error)
+        {
+            animal = null;
+            error = string.Empty;
+            Vector3 origin = ToVector3(command.AimOrigin);
+            Vector3 direction = ToVector3(command.AimDirection);
+            if (direction.sqrMagnitude <= 0.0001f)
+            {
+                error = "Aim direction is required.";
+                return false;
+            }
+
+            if (!Physics.SphereCast(origin, 0.45f, direction.normalized, out RaycastHit hit, 8f, ~0, QueryTriggerInteraction.Collide))
+            {
+                error = "No primary action target.";
+                return false;
+            }
+
+            InteractableTargetView view = hit.collider == null ? null : hit.collider.GetComponentInParent<InteractableTargetView>();
+            if (view == null)
+            {
+                error = "Primary action target is not registered.";
+                return false;
+            }
+
+            if (view.Kind != InteractionKind.Animal)
+            {
+                error = "Primary action target is not an animal.";
+                return false;
+            }
+
+            uint id = view.ResolveTargetNetworkId();
+            if (!playtestAnimals.TryGetValue(id, out animal))
+            {
+                animal = GetOrCreateAnimal(id, view);
+            }
+
+            return animal != null;
+        }
+
+        private static Vector3 ToVector3(Vec3 value)
+        {
+            return value == null ? Vector3.zero : new Vector3(value.X, value.Y, value.Z);
+        }
+
+        private static long UnixNowMs()
+        {
+            return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }
         public bool TryApplyInventoryAdd(NetworkConnection connection, string commandId, string itemDefinitionId, int quantity, out InventoryMutationResult result)
         {
@@ -529,6 +882,9 @@ namespace SurvivalWorld.Server
                     TrySpawnPlayer(connection);
                 }
             }
+
+            PlaytestScenarioSeeder.EnsureSeededForCurrentScene();
+            RegisterSceneInteractionTargets();
         }
 
         private void TrySpawnPlayer(NetworkConnection connection)

@@ -26,6 +26,14 @@ namespace SurvivalWorld.Server.Simulation
 
         public IReadOnlyDictionary<string, WorldItemState> WorldItems => worldItems;
 
+        public void RegisterWorldItem(WorldItemState worldItem)
+        {
+            if (worldItem != null && !string.IsNullOrWhiteSpace(worldItem.WorldItemId))
+            {
+                worldItems[worldItem.WorldItemId] = worldItem;
+            }
+        }
+
         public DiscardResult Discard(InventoryOwner owner, string actorId, string itemDefinitionId, int quantity, Vector3 position, long unixTimeMs)
         {
             M3InventoryResult consumed = inventory.ConsumeAvailable(owner, itemDefinitionId, quantity);

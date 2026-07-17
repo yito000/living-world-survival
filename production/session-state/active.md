@@ -68,3 +68,10 @@
 - Deviations: Current Unity project lacks a GLB importer package, so the import processor used deterministic manifest fallback meshes while preserving metadata/collider/socket/interaction prefab contracts. Adding a GLB importer will switch generated prefabs to source model geometry.
 - Blockers: None for current Windows compile/test/import scope
 - Next: /code-review unity/SurvivalWorld/Assets/Editor/AssetImportProcessor.cs unity/SurvivalWorld/Assets/Scripts/Auth/MatchmakingJoinFlow.cs unity/SurvivalWorld/Assets/Scripts/Bootstrap/Bootstrapper.cs unity/SurvivalWorld/Assets/Tests/EditMode/M7AssetImportProcessorTests.cs unity/SurvivalWorld/Assets/Tests/EditMode/M7SessionRecoveryTests.cs then /story-done docs/prompts/story_0007/win/unity/10A_M7実装指示書_Windows側_v0.1.md
+
+## Session Extract - /dev-story 2026-07-18
+- Story: docs/prompts/story_0008a/win/unity/11A_M8A_PlaytestInteractions実装指示書_Windows側_v0.1.md - M8A Playtest Interactions
+- Files changed: Player input/bridges, interaction scanner/targets/controller/seeder, playtest UI, ServerBootstrap M3 command routing, CleaningSystem target registration, PlayerCharacter prefab, M8A EditMode/PlayMode tests
+- Test written: unity/SurvivalWorld/Assets/Tests/EditMode/M8APlaytestInteractionsEditModeTests.cs, unity/SurvivalWorld/Assets/Tests/PlayMode/M8APlaytestArenaPlayModeTests.cs
+- Blockers: None
+- Next: /code-review M8A changed Unity files then /story-done docs/prompts/story_0008a/win/unity/11A_M8A_PlaytestInteractions実装指示書_Windows側_v0.1.md
