@@ -8,13 +8,13 @@ package worldevent
 import (
 	"context"
 	"errors"
-	"log"
 	"sync/atomic"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
@@ -45,11 +45,13 @@ func (s *Server) Register(ctx context.Context, req *survivalv1.RegisterRequest) 
 	if req.GetWorldId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "world_id is required")
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{WorldID: req.GetWorldId()})
 
 	id, err := s.Store.RegisterWorldEvent(ctx,
 		req.GetProposalId(), req.GetTemplateId(), req.GetWorldId(), req.GetRegionId(), req.GetParams())
 	if err != nil {
-		log.Printf("grpc: RegisterWorldEvent: %v", err)
+		obs.L(ctx).Error("register world event failed", "error", err.Error(),
+			"proposal_id", req.GetProposalId(), "template_id", req.GetTemplateId())
 		return nil, status.Error(codes.Internal, "register world event failed")
 	}
 	return &survivalv1.RegisterResponse{EventInstanceId: id}, nil
@@ -81,7 +83,8 @@ func (s *Server) UpdateState(ctx context.Context, req *survivalv1.UpdateStateReq
 		// rather than retry blindly.
 		return &survivalv1.UpdateStateResponse{Status: survivalv1.ResultStatus_RESULT_STATUS_CONFLICT}, nil
 	case err != nil:
-		log.Printf("grpc: UpdateWorldEventState: %v", err)
+		obs.L(ctx).Error("update world event state failed", "error", err.Error(),
+			"event_instance_id", req.GetEventInstanceId(), "new_state", newState)
 		return nil, status.Error(codes.Internal, "update world event state failed")
 	}
 
@@ -90,9 +93,10 @@ func (s *Server) UpdateState(ctx context.Context, req *survivalv1.UpdateStateReq
 		if gerr != nil {
 			// The transition is committed; failing to announce it must not fail
 			// the RPC (the DS has already finished the event locally).
-			log.Printf("worldevent: could not load instance for completed result: %v", gerr)
+			obs.L(ctx).Warn("load instance for completed result failed",
+				"error", gerr.Error(), "event_instance_id", req.GetEventInstanceId())
 		} else {
-			results.PublishCompleted(inst)
+			results.PublishCompleted(ctx, inst)
 		}
 	}
 	return &survivalv1.UpdateStateResponse{Status: survivalv1.ResultStatus_RESULT_STATUS_OK}, nil

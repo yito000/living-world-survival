@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
@@ -40,17 +40,19 @@ func (s *ActorStateServer) Save(ctx context.Context, req *survivalv1.SaveRequest
 	if actorID == "" {
 		return nil, status.Error(codes.InvalidArgument, "actor_id is required")
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{ActorID: actorID})
 
 	payload, worldID := s.buildPayload(ctx, actorID, req)
 	if worldID == "" {
 		// world_id is required (NOT NULL) and could not be resolved.
-		log.Printf("grpc: ActorState.Save actor=%s: world_id unresolved", actorID)
+		obs.L(ctx).Warn("actor state save rejected: world_id unresolved")
 		return &survivalv1.SaveResponse{Status: survivalv1.ResultStatus_RESULT_STATUS_REJECTED}, nil
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{WorldID: worldID})
 
 	updated, err := s.Store.SaveActorState(ctx, actorID, worldID, req.GetVersion(), payload)
 	if err != nil {
-		log.Printf("grpc: ActorState.Save: %v", err)
+		obs.L(ctx).Error("save actor state failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "save actor state failed")
 	}
 	if !updated {
@@ -99,7 +101,8 @@ func (s *ActorStateServer) buildPayload(ctx context.Context, actorID string, req
 		if existing, err := s.Store.LoadActorStateWorld(ctx, actorID); err == nil {
 			worldID = existing
 		} else if !errors.Is(err, store.ErrNotFound) {
-			log.Printf("grpc: ActorState.Save resolve world: %v", err)
+			// 解決できなくても続行する（呼び出し側が world_id 未解決として REJECTED を返す）。
+			obs.L(ctx).Warn("resolve actor world failed", "error", err.Error())
 		}
 	}
 	return payload, worldID

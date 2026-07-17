@@ -1,12 +1,13 @@
 package worldevent
 
 import (
+	"context"
 	"encoding/json"
-	"log"
 
 	"github.com/nats-io/nats.go"
 
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 )
 
 // ResultSubject carries Approved / Rejected / Completed announcements (14.3).
@@ -44,23 +45,28 @@ type ResultPublisher struct {
 // NewResultPublisher returns a publisher over the given NATS connection.
 func NewResultPublisher(nc *nats.Conn) *ResultPublisher { return &ResultPublisher{nc: nc} }
 
-func (p *ResultPublisher) publish(r Result) {
+// publish は ctx の相関フィールドを引き継いでログを出す。announce の失敗は
+// 呼び出し側の処理を止めない（コミット済みの遷移は覆せない）ので warn 止まり。
+func (p *ResultPublisher) publish(ctx context.Context, r Result) {
 	if p == nil || p.nc == nil {
 		return
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{WorldID: r.WorldID})
 	data, err := json.Marshal(r)
 	if err != nil {
-		log.Printf("worldevent: marshal result: %v", err)
+		obs.L(ctx).Warn("marshal world event result failed",
+			"error", err.Error(), "status", r.Status)
 		return
 	}
 	if err := p.nc.Publish(ResultSubject, data); err != nil {
-		log.Printf("worldevent: publish result: %v", err)
+		obs.L(ctx).Warn("publish world event result failed",
+			"error", err.Error(), "status", r.Status, "subject", ResultSubject)
 	}
 }
 
 // PublishApproved announces that a proposal was accepted and registered.
-func (p *ResultPublisher) PublishApproved(proposal Proposal, instanceID string) {
-	p.publish(Result{
+func (p *ResultPublisher) PublishApproved(ctx context.Context, proposal Proposal, instanceID string) {
+	p.publish(ctx, Result{
 		Status:          ResultApproved,
 		ProposalID:      proposal.ProposalID,
 		EventInstanceID: instanceID,
@@ -73,8 +79,8 @@ func (p *ResultPublisher) PublishApproved(proposal Proposal, instanceID string) 
 // PublishRejected announces that a proposal was declined, with the reason code
 // the Director records. Per 10.4 the Director must NOT re-generate a free-form
 // alternative — it waits for the next evaluation window.
-func (p *ResultPublisher) PublishRejected(proposal Proposal, reasonCode string) {
-	p.publish(Result{
+func (p *ResultPublisher) PublishRejected(ctx context.Context, proposal Proposal, reasonCode string) {
+	p.publish(ctx, Result{
 		Status:     ResultRejected,
 		ProposalID: proposal.ProposalID,
 		TemplateID: proposal.TemplateID,
@@ -85,8 +91,8 @@ func (p *ResultPublisher) PublishRejected(proposal Proposal, reasonCode string) 
 }
 
 // PublishCompleted announces an event's end plus its aggregate stats (3.6 終了時).
-func (p *ResultPublisher) PublishCompleted(inst store.WorldEventInstance) {
-	p.publish(Result{
+func (p *ResultPublisher) PublishCompleted(ctx context.Context, inst store.WorldEventInstance) {
+	p.publish(ctx, Result{
 		Status:          ResultCompleted,
 		ProposalID:      inst.ProposalID,
 		EventInstanceID: inst.EventInstanceID,

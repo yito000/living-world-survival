@@ -17,9 +17,16 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Protocol
 
 from app.candidates import select_candidates
+from app.obs import (
+    DECISION_REQUESTS,
+    EVENT_LAG_SECONDS,
+    EVENTS_PROCESSED,
+    PROJECTION_SECONDS,
+)
 from app.repo import DecisionStore, ProjectionStore, TemplateRepo, decision_id_of
 
 try:  # pragma: no cover - import guard
@@ -76,6 +83,20 @@ def category_of(subject: str) -> str:
     return parts[-1] if parts else ""
 
 
+def _observe_event_lag(envelope: dict[str, Any]) -> None:
+    """DS が事象を起こしてから Consumer が処理するまでの遅れを記録する（第13章 イベント Lag）。
+
+    occurred_at_unix_ms は DS 側の時計なので、DS とこのプロセスの時計がずれていると
+    負値になり得る。負の Lag を Gauge へ載せると劣化を見落とすので捨てる。
+    """
+    occurred_ms = envelope.get("occurred_at_unix_ms")
+    if not isinstance(occurred_ms, int | float) or occurred_ms <= 0:
+        return
+    lag = time.time() - (occurred_ms / 1000.0)
+    if lag >= 0:
+        EVENT_LAG_SECONDS.set(lag)
+
+
 async def handle_message(
     data: bytes,
     dedup: Dedup,
@@ -92,43 +113,46 @@ async def handle_message(
     try:
         envelope = json.loads(data)
     except (ValueError, TypeError):
-        logger.warning("worldstate: drop malformed message (%d bytes)", len(data))
+        EVENTS_PROCESSED.labels(result="malformed").inc()
+        logger.warning("drop malformed message", extra={"bytes": len(data)})
         return False
     if not isinstance(envelope, dict):
-        logger.warning("worldstate: drop non-object message")
+        EVENTS_PROCESSED.labels(result="malformed").inc()
+        logger.warning("drop non-object message")
         return False
 
     message_id = message_id_of(envelope)
     is_new = await dedup.record(consumer_id, message_id)
     event_type = envelope.get("type", "?")
     world_id = envelope.get("world_id", "?")
+    fields = {"message_id": message_id, "event_type": event_type, "world_id": world_id}
+
     if not is_new:
-        logger.info(
-            "worldstate: duplicate %s type=%s world=%s (deduped)",
-            message_id,
-            event_type,
-            world_id,
-        )
+        # 重複は異常ではない。NATS/DS 再起動後は同じ event_id が必ず再配送される
+        # （10B 6章）。ここで一度だけに絞れているかを系列で見える化する。
+        EVENTS_PROCESSED.labels(result="duplicate").inc()
+        logger.info("duplicate event deduped", extra=fields)
         return False
+
+    _observe_event_lag(envelope)
 
     if projection is not None and category in PROJECTED_CATEGORIES:
         try:
+            started = time.perf_counter()
             version = await projection.apply(
                 envelope, allow_aggregate_fallback=(category == "actor")
             )
+            PROJECTION_SECONDS.observe(time.perf_counter() - started)
             if version is not None:
-                logger.info(
-                    "worldstate: projected %s type=%s world=%s v=%d",
-                    message_id,
-                    event_type,
-                    world_id,
-                    version,
-                )
+                EVENTS_PROCESSED.labels(result="projected").inc()
+                logger.info("projected event", extra={**fields, "version": version})
                 return True
         except Exception:  # pragma: no cover - defensive; redelivery/next event recovers
-            logger.exception("worldstate: projection apply failed for %s", message_id)
+            EVENTS_PROCESSED.labels(result="failed").inc()
+            logger.exception("projection apply failed", extra=fields)
 
-    logger.info("worldstate: received %s type=%s world=%s", message_id, event_type, world_id)
+    EVENTS_PROCESSED.labels(result="received").inc()
+    logger.info("received event", extra=fields)
     return True
 
 
@@ -218,7 +242,7 @@ class Consumer:
         api 側が WORLD_EVENTS ストリームを作るが、起動順の競合で未作成の一瞬があり得るため、
         購読前にストリームの存在を待つ（無ければ購読土台として自ら作成する）。"""
         if self._nc is None:
-            logger.info("worldstate: consumer disabled (no NATS)")
+            logger.info("consumer disabled (no NATS)")
             return
         js = self._nc.jetstream()
         await self._ensure_stream(js)
@@ -237,11 +261,11 @@ class Consumer:
                     )
                     await msg.ack()
                 except Exception:  # pragma: no cover - defensive; redelivery handles it
-                    logger.exception("worldstate: handler error; leaving message for redelivery")
+                    logger.exception("handler error; leaving message for redelivery")
 
             sub = await js.subscribe(subject, durable=durable, stream=STREAM, cb=_cb)
             self._subs.append(sub)
-            logger.info("worldstate: subscribed %s (durable=%s)", subject, durable)
+            logger.info("subscribed", extra={"subject": subject, "durable": durable})
 
     async def _ensure_stream(self, js: Any) -> None:
         """WORLD_EVENTS ストリームの存在を確認し、無ければ作成する（api と同一設定）。"""
@@ -252,10 +276,10 @@ class Consumer:
             pass
         try:
             await js.add_stream(name=STREAM, subjects=["world.>"])
-            logger.info("worldstate: created stream %s", STREAM)
+            logger.info("created stream", extra={"stream": STREAM})
         except Exception:
             # api が並行して作成済みなら重複作成で例外になる — 購読は継続できるので握る。
-            logger.info("worldstate: stream %s ensure raced (already exists)", STREAM)
+            logger.info("stream ensure raced (already exists)", extra={"stream": STREAM})
 
     async def stop(self) -> None:
         for sub in self._subs:
@@ -282,42 +306,48 @@ class DecisionRequestConsumer:
 
     async def start(self) -> None:
         if self._nc is None:
-            logger.info("worldstate: decision request consumer disabled (no NATS)")
+            logger.info("decision request consumer disabled (no NATS)")
             return
         try:
             self._active = await self._templates.list_active()
         except Exception:  # pragma: no cover - infra dependent
-            logger.exception("worldstate: could not load active templates; using empty set")
+            logger.exception("could not load active templates; using empty set")
             self._active = []
-        logger.info("worldstate: loaded %d active templates for candidates", len(self._active))
+        logger.info("loaded active templates for candidates", extra={"count": len(self._active)})
 
         async def _cb(msg: Any) -> None:
             await self._on_request(msg.data)
 
         self._sub = await self._nc.subscribe(DECISION_REQUEST_SUBJECT, cb=_cb)
-        logger.info("worldstate: subscribed %s", DECISION_REQUEST_SUBJECT)
+        logger.info("subscribed", extra={"subject": DECISION_REQUEST_SUBJECT})
 
     async def _on_request(self, data: bytes) -> None:
         try:
             request = json.loads(data)
         except (ValueError, TypeError):
-            logger.warning("worldstate: drop malformed decision request")
+            DECISION_REQUESTS.labels(result="malformed").inc()
+            logger.warning("drop malformed decision request")
             return
         if not isinstance(request, dict):
+            DECISION_REQUESTS.labels(result="malformed").inc()
             return
         rec = build_requested(request, self._active)
         try:
             await self._decisions.record_requested(
                 rec["decision_id"], rec["actor_id"], rec["state_version"], rec["candidates"]
             )
+            DECISION_REQUESTS.labels(result="requested").inc()
             logger.info(
-                "worldstate: decision requested id=%s actor=%s candidates=%d",
-                rec["decision_id"],
-                rec["actor_id"],
-                len(rec["candidates"]),
+                "decision requested",
+                extra={
+                    "decision_id": rec["decision_id"],
+                    "actor_id": rec["actor_id"],
+                    "candidates": len(rec["candidates"]),
+                },
             )
         except Exception:  # pragma: no cover - infra dependent
-            logger.exception("worldstate: could not record requested decision")
+            DECISION_REQUESTS.labels(result="failed").inc()
+            logger.exception("could not record requested decision")
 
     async def stop(self) -> None:
         if self._sub is not None:

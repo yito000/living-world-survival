@@ -1,7 +1,7 @@
 """WorldState FastAPI application（M4 / 07B 3.2-3.4）。
 
-liveness (/healthz) / readiness (/readyz) に加え、DS 起動時取得用のテンプレ配信
-(GET /internal/action_templates) を公開する。起動時に NATS/Postgres へ接続し、Actor
+liveness (/healthz) / readiness (/readyz) / metrics (/metrics, M7) に加え、DS 起動時取得用の
+テンプレ配信 (GET /internal/action_templates) を公開する。起動時に NATS/Postgres へ接続し、Actor
 イベント投影と ai.decision.request 購読を開始する。R7 に従い request handler に重い処理は
 置かない（投影/判断購読は独立の購読タスクで処理する）。
 """
@@ -16,7 +16,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from app.consumer import (
     Consumer,
@@ -24,10 +24,12 @@ from app.consumer import (
     InMemoryDedup,
     PgDedup,
 )
+from app.obs import render_metrics, setup_logging
 from app.repo import DecisionStore, ProjectionStore, TemplateRepo, create_pool
 
-# 購読の受信/投影ログ（INFO）が既定の WARNING で消えないよう明示的に設定する。
-logging.basicConfig(level=logging.INFO)
+# JSON 構造化ログ（10B 3.5 / 第13章）。購読の受信/投影ログ（INFO）が既定の
+# WARNING で消えないよう、閾値もここで設定する。
+setup_logging("worldstate")
 logger = logging.getLogger("worldstate")
 
 # nats-py is optional at import time so that `python -c "import app.main"` works
@@ -70,10 +72,10 @@ async def _connect_nats() -> None:
                 ),
                 timeout=6,
             )
-            logger.info("worldstate: connected to NATS at %s", url)
+            logger.info("connected to NATS", extra={"url": url})
             return
         except Exception:
-            logger.info("worldstate: NATS connect failed (attempt %d), retrying...", attempt + 1)
+            logger.info("NATS connect failed, retrying", extra={"attempt": attempt + 1})
             await asyncio.sleep(1)
 
 
@@ -85,7 +87,7 @@ async def _start_consumers() -> None:
     try:
         pool = state.pool
         dedup = PgDedup(pool) if pool is not None else InMemoryDedup()
-        logger.info("worldstate: dedup backend = %s", type(dedup).__name__)
+        logger.info("dedup backend selected", extra={"backend": type(dedup).__name__})
 
         projection = ProjectionStore(pool) if pool is not None else None
         consumer = Consumer(state.nc, dedup, projection=projection)
@@ -99,9 +101,9 @@ async def _start_consumers() -> None:
             await decision_consumer.start()
             state.decision_consumer = decision_consumer
         else:
-            logger.info("worldstate: decision request consumer disabled (no Postgres)")
+            logger.info("decision request consumer disabled (no Postgres)")
     except Exception:
-        logger.exception("worldstate: consumers failed to start (health stays up)")
+        logger.exception("consumers failed to start (health stays up)")
 
 
 @contextlib.asynccontextmanager
@@ -109,7 +111,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     state.pool = await create_pool()
     if state.pool is not None:
         state.templates = TemplateRepo(state.pool)
-        logger.info("worldstate: Postgres pool ready")
+        logger.info("Postgres pool ready")
     await _connect_nats()
     await _start_consumers()
     try:
@@ -139,16 +141,42 @@ async def healthz() -> dict[str, str]:
 
 @app.get("/readyz")
 async def readyz() -> JSONResponse:
-    connected = state.nc is not None and state.nc.is_connected
-    if not connected:
+    """依存先（Postgres/NATS）まで含めて処理可能かを返す（第13章 dependency health）。
+
+    投影も判断要求購読も Postgres が無いと成立しないので、NATS だけでなく
+    Postgres も見る（見ていなかったため、DB 断でも ready を返していた）。
+    """
+    if state.pool is None:
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "dependency": "postgres"},
+        )
+    try:
+        # プールを握っているだけでは生存を保証しないので、実際に 1 往復する。
+        await asyncio.wait_for(state.pool.fetchval("SELECT 1"), timeout=2)
+    except Exception:
+        logger.warning("readiness check failed", extra={"dependency": "postgres"})
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "dependency": "postgres"},
+        )
+
+    if state.nc is None or not state.nc.is_connected:
         return JSONResponse(
             status_code=503,
             content={"status": "unavailable", "dependency": "nats"},
         )
     return JSONResponse(
         status_code=200,
-        content={"status": "ready", "dependency": "nats"},
+        content={"status": "ready", "dependency": "postgres,nats"},
     )
+
+
+@app.get("/metrics")
+async def metrics() -> Response:
+    """Prometheus exposition 形式（R-PROM）。負荷/Soak ハーネスがスクレイプする。"""
+    body, content_type = render_metrics()
+    return Response(content=body, media_type=content_type)
 
 
 @app.get("/internal/action_templates")
@@ -166,6 +194,6 @@ async def action_templates(status: str = Query(default="active")) -> JSONRespons
     try:
         items = await state.templates.list_active()
     except Exception:
-        logger.exception("worldstate: list_active failed")
+        logger.exception("list_active failed")
         return JSONResponse(status_code=503, content={"error": "database error"})
     return JSONResponse(status_code=200, content={"templates": items, "count": len(items)})

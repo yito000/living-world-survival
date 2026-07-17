@@ -48,3 +48,19 @@ jobs:
         run: make test
       - name: assets
         run: make assets
+
+      # M7（10B 3.6）: security は軽量・高速なので PR CI に載せる。
+      # postgres service だけで完結する範囲（compose の port 公開範囲・
+      # Repo の secret 混入・ログ秘匿・MVP-SEC-00x の Go テスト）。
+      # 負荷/soak/recovery は重い or DS 成果物依存なので nightly.yml へ。
+      - name: security
+        run: make security
+
+      # Gate 未達や FAIL の内訳を後から数値で追えるようにする（第19.1 / AT-020）。
+      - name: upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: build/reports/
+          if-no-files-found: ignore

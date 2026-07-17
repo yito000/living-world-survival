@@ -59,6 +59,32 @@ public static class BuildScript
 
         Report(BuildPipeline.BuildPlayer(options));
     }
+    public static void ImportAssets()
+    {
+        try
+        {
+            SurvivalWorld.Editor.AssetImportProcessor.ImportAll();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            EditorApplication.Exit(1);
+        }
+    }
+
+    public static void ConfigureStarterAssetsPlayer()
+    {
+        try
+        {
+            SurvivalWorld.Editor.StarterAssetsPlayerPrefabSetup.Apply();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            EditorApplication.Exit(1);
+        }
+    }
+
 
     private static void ConfigureLinuxServerNativePlugins()
     {

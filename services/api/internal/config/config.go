@@ -32,6 +32,11 @@ type Config struct {
 	// RankingInterval is how often the asset ranking batch runs unattended
 	// (09B 3.9: 1時間ごと). The batch can also be triggered via /admin/ranking/run.
 	RankingInterval time.Duration
+
+	// MetricsSampleInterval is how often Outbox depth / event lag gauges are
+	// refreshed (10B 3.5). Sampling on a timer rather than on scrape keeps the
+	// scrape itself off the DB.
+	MetricsSampleInterval time.Duration
 }
 
 // Load reads the environment and returns a Config with dev-safe defaults.
@@ -45,6 +50,8 @@ func Load() *Config {
 		ItemDefPath:      envOr("ITEM_DEFINITIONS_PATH", "data/item_definitions.json"),
 		OutboxInterval:   durationOr("OUTBOX_RELAY_INTERVAL", time.Second),
 		RankingInterval:  durationOr("RANKING_BATCH_INTERVAL", time.Hour),
+
+		MetricsSampleInterval: durationOr("METRICS_SAMPLE_INTERVAL", 5*time.Second),
 	}
 }
 

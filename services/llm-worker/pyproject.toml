@@ -9,6 +9,8 @@ dependencies = [
     # 実 LLM（Anthropic API・構造化出力）。LLM_MOCK=1 の経路は SDK 非依存で動く（3.7）。
     "anthropic>=0.40",
     "pydantic>=2.7",
+    # /metrics の exposition（10B 3.5 / 第13章 R-PROM）。
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

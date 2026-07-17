@@ -232,3 +232,54 @@ async def test_worker_ignores_malformed_request() -> None:
     assert await worker.on_request(b"not json") is None
     assert await worker.on_request(b'"a string"') is None
     assert nc.published == []
+
+
+# --- MVP-SEC-008: LLM 入力から個人認証情報を除外（17章 / 10B 3.4）------------
+
+
+def test_state_summary_excludes_pii() -> None:
+    """投影に個人認証情報が紛れても、LLM へ渡す要約には出さない。
+
+    state_summary は許可キー（personal_state / inventory_summary / active_template /
+    wallet）だけを載せる allowlist 方式。email / account_id / password のような
+    PII キーが projection に入っていても、要約に混ざらないことを固定する。
+    """
+    from worker.candidates import state_summary
+
+    projection = {
+        "personal_state": {"hunger": 40, "stamina": 80},
+        "inventory_summary": {"iron_ore": 3},
+        "active_template": "mining.acquire_iron",
+        "wallet": {"coins": 120},
+        # 以下は投影に紛れ込み得る PII。要約に出てはならない。
+        "email": "player@example.com",
+        "account_id": "acc-secret-123",
+        "password_hash": "$argon2id$v=19$m=...",
+        "refresh_token": "rt-should-never-appear",
+    }
+    summary = state_summary(projection, reason="hungry")
+
+    for leaked in (
+        "player@example.com",
+        "acc-secret-123",
+        "$argon2id$",
+        "rt-should-never-appear",
+        "email",
+        "account_id",
+        "password",
+        "refresh_token",
+    ):
+        assert leaked not in summary, f"PII leaked into LLM input: {leaked!r}"
+
+    # ゲーム状態は載る（要約が空にならないこと）。
+    assert "personal_state" in summary
+    assert "hunger" in summary
+
+
+def test_state_summary_survives_without_projection() -> None:
+    """投影が無くても reason だけで要約が成立する（PII 経路を通らない）。"""
+    from worker.candidates import state_summary
+
+    summary = state_summary(None, reason="periodic")
+    assert "reason: periodic" in summary
+    assert "unavailable" in summary

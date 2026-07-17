@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/nats-io/nats.go"
+
+	"living-world-survival/services/common/obs"
 )
 
 // ProposalSubject is what the Director publishes to (14.3). The wildcard binds
@@ -105,15 +107,16 @@ func (a *Approver) Start(ctx context.Context) error {
 		return fmt.Errorf("worldevent: subscribe %s: %w", ProposalSubject, err)
 	}
 	a.sub = sub
-	log.Printf("worldevent: approver subscribed to %s", ProposalSubject)
+	obs.L(ctx).Info("worldevent approver subscribed", "subject", ProposalSubject)
 	return nil
 }
 
-// Stop unsubscribes.
+// Stop unsubscribes. ctx を持たないので default logger を使う。
 func (a *Approver) Stop() {
 	if a.sub != nil {
 		if err := a.sub.Unsubscribe(); err != nil {
-			log.Printf("worldevent: unsubscribe: %v", err)
+			slog.Default().Warn("worldevent approver unsubscribe failed",
+				"error", err.Error(), "subject", ProposalSubject)
 		}
 		a.sub = nil
 	}
@@ -122,34 +125,40 @@ func (a *Approver) Stop() {
 func (a *Approver) handle(ctx context.Context, data []byte) {
 	var p Proposal
 	if err := json.Unmarshal(data, &p); err != nil {
-		log.Printf("worldevent: drop malformed proposal (%d bytes)", len(data))
+		obs.L(ctx).Warn("drop malformed proposal", "error", err.Error(), "bytes", len(data))
 		return
 	}
 	if p.ProposalID == "" || p.WorldID == "" {
-		log.Printf("worldevent: drop proposal missing proposal_id/world_id")
+		obs.L(ctx).Warn("drop proposal missing proposal_id/world_id")
 		return
 	}
+	// 以降のログは提案が指す world を相関フィールドに載せる（第13章）。
+	ctx = obs.WithFields(ctx, obs.Fields{WorldID: p.WorldID})
 
 	reason, err := a.check(ctx, p)
 	if err != nil {
 		// A check could not be evaluated (DB trouble). Do not reject on a
 		// transient failure — say nothing and let the next evaluation retry.
-		log.Printf("worldevent: approval check failed for %s: %v", p.ProposalID, err)
+		obs.L(ctx).Warn("approval check failed", "error", err.Error(),
+			"proposal_id", p.ProposalID, "template_id", p.TemplateID)
 		return
 	}
 	if reason != "" {
-		log.Printf("worldevent: rejected proposal %s (%s): %s", p.ProposalID, p.TemplateID, reason)
-		a.Results.PublishRejected(p, reason)
+		obs.L(ctx).Info("proposal rejected",
+			"proposal_id", p.ProposalID, "template_id", p.TemplateID, "reason_code", reason)
+		a.Results.PublishRejected(ctx, p, reason)
 		return
 	}
 
 	id, err := a.Store.RegisterWorldEvent(ctx, p.ProposalID, p.TemplateID, p.WorldID, p.RegionID, p.Params)
 	if err != nil {
-		log.Printf("worldevent: register approved proposal %s: %v", p.ProposalID, err)
+		obs.L(ctx).Error("register approved proposal failed", "error", err.Error(),
+			"proposal_id", p.ProposalID, "template_id", p.TemplateID)
 		return
 	}
-	log.Printf("worldevent: approved proposal %s (%s) -> instance %s", p.ProposalID, p.TemplateID, id)
-	a.Results.PublishApproved(p, id)
+	obs.L(ctx).Info("proposal approved", "proposal_id", p.ProposalID,
+		"template_id", p.TemplateID, "event_instance_id", id)
+	a.Results.PublishApproved(ctx, p, id)
 }
 
 // check runs the DB-decidable 10.4 checks and returns a reason_code, or "" when

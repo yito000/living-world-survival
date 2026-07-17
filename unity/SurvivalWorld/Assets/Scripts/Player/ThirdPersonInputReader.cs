@@ -1,4 +1,5 @@
 using R3;
+using StarterAssets;
 using Survival.V1;
 using UnityEngine;
 using UnityEngine.InputSystem;
@@ -17,6 +18,8 @@ namespace SurvivalWorld.Player
         [SerializeField] private InputActionReference lookAction;
         [SerializeField] private InputActionReference jumpAction;
         [SerializeField] private InputActionReference sprintAction;
+        [SerializeField] private StarterAssetsInputs starterAssetsInputs;
+        [SerializeField] private bool preferStarterAssetsInputs = true;
 
         private readonly Subject<InputCommand> commands = new Subject<InputCommand>();
         private InputAction resolvedMoveAction;
@@ -24,16 +27,19 @@ namespace SurvivalWorld.Player
         private InputAction resolvedJumpAction;
         private InputAction resolvedSprintAction;
         private long sequence;
+        private bool previousStarterJump;
 
         public Observable<InputCommand> Commands => commands;
 
         private void Awake()
         {
+            ResolveStarterAssetsInputs();
             ResolveActions();
         }
 
         private void OnEnable()
         {
+            ResolveStarterAssetsInputs();
             ResolveActions();
             Enable(MoveAction);
             Enable(LookAction);
@@ -43,6 +49,7 @@ namespace SurvivalWorld.Player
 
         private void OnDisable()
         {
+            previousStarterJump = false;
             Disable(MoveAction);
             Disable(LookAction);
             Disable(JumpAction);
@@ -57,10 +64,16 @@ namespace SurvivalWorld.Player
         public void ResetSequence()
         {
             sequence = 0;
+            previousStarterJump = false;
         }
 
         public InputCommand ReadCurrentCommand(long tick, float cameraYawDegrees)
         {
+            if (TryReadStarterAssetsInput(out Vector2 starterMove, out Vector2 starterLook, out bool starterJump, out bool starterSprint))
+            {
+                return BuildCommand(starterMove, starterLook, starterJump, starterSprint, cameraYawDegrees, tick);
+            }
+
             InputAction move = MoveAction;
             InputAction look = LookAction;
             InputAction jump = JumpAction;
@@ -102,8 +115,41 @@ namespace SurvivalWorld.Player
         private InputAction JumpAction => jumpAction != null && jumpAction.action != null ? jumpAction.action : resolvedJumpAction;
         private InputAction SprintAction => sprintAction != null && sprintAction.action != null ? sprintAction.action : resolvedSprintAction;
 
+        private bool TryReadStarterAssetsInput(out Vector2 move, out Vector2 look, out bool jump, out bool sprint)
+        {
+            move = Vector2.zero;
+            look = Vector2.zero;
+            jump = false;
+            sprint = false;
+
+            if (!preferStarterAssetsInputs || starterAssetsInputs == null)
+            {
+                return false;
+            }
+
+            move = starterAssetsInputs.move;
+            look = starterAssetsInputs.look;
+            jump = starterAssetsInputs.jump && !previousStarterJump;
+            sprint = starterAssetsInputs.sprint;
+            previousStarterJump = starterAssetsInputs.jump;
+            return true;
+        }
+
+        private void ResolveStarterAssetsInputs()
+        {
+            if (starterAssetsInputs == null)
+            {
+                starterAssetsInputs = GetComponent<StarterAssetsInputs>();
+            }
+        }
+
         private void ResolveActions()
         {
+            if (actionAsset == null && TryGetComponent(out PlayerInput playerInput))
+            {
+                actionAsset = playerInput.actions;
+            }
+
             if (actionAsset == null)
             {
                 return;

@@ -84,7 +84,7 @@ def use_mock() -> bool:
         # 安全側フォールバック: キーが無い環境で実 API を叩きにいって落ちるより、
         # 決定的なモックで成立させ、警告でオペレータに気づかせる。
         logger.warning(
-            "llm-worker: ANTHROPIC_API_KEY 未設定のためモック LLM で動作します "
+            "ANTHROPIC_API_KEY 未設定のためモック LLM で動作します "
             "(実 LLM を使うにはキーを設定するか LLM_MOCK=0 を明示してください)"
         )
         return True
@@ -108,7 +108,8 @@ def log_usage(kind: str, usage: Any) -> dict[str, int]:
         value = getattr(usage, field, None)
         if isinstance(value, int):
             out[field] = value
-    logger.info("llm-worker: usage kind=%s %s", kind, out)
+    # トークン数は個別フィールドとして出す（JSON ログ側で集計・アラートに使えるように）。
+    logger.info("llm usage", extra={"kind": kind, **out})
     return out
 
 

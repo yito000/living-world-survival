@@ -38,7 +38,7 @@ async def create_pool() -> Any | None:
     try:
         return await asyncpg.create_pool(dsn=url, min_size=1, max_size=8)
     except Exception:  # pragma: no cover - infra dependent
-        logger.warning("worldstate: could not connect Postgres", exc_info=True)
+        logger.warning("could not connect Postgres", exc_info=True)
         return None
 
 

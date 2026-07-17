@@ -19,7 +19,7 @@ namespace SurvivalWorld.Editor
     public static class M1SceneSetup
     {
         private const string ConfigPath = "Assets/Settings/SurvivalRuntimeConfig.asset";
-        private const string PlayerControlsPath = "Assets/Settings/PlayerControls.inputactions";
+        private const string PlayerControlsPath = "Assets/StarterAssets/InputSystem/StarterAssets.inputactions";
         private const string BootstrapScenePath = "Assets/Scenes/Bootstrap.unity";
         private const string WorldScenePath = "Assets/Scenes/World_MVP.unity";
         private const string PlayerPrefabPath = "Assets/Prefabs/PlayerCharacter.prefab";
@@ -90,12 +90,7 @@ namespace SurvivalWorld.Editor
             player.transform.rotation = Quaternion.identity;
             player.transform.localScale = Vector3.one;
 
-            EnsureComponent<NetworkObject>(player);
-            EnsureComponent<CharacterController>(player);
-            ThirdPersonInputReader inputReader = EnsureComponent<ThirdPersonInputReader>(player);
-            NetworkPlayerController controller = EnsureComponent<NetworkPlayerController>(player);
-            SetObjectReference(inputReader, "actionAsset", controls);
-            SetObjectReference(controller, "inputReader", inputReader);
+            StarterAssetsPlayerPrefabSetup.ConfigurePlayerObject(player, controls, replaceVisual: true);
 
             Camera camera = Camera.main;
             if (camera != null)

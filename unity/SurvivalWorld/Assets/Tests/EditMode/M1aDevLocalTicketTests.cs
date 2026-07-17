@@ -55,12 +55,32 @@ namespace SurvivalWorld.Tests
             Assert.IsFalse(result.Accepted);
             Assert.AreEqual(JoinTicketRejectionReason.BuildMismatch, result.Reason);
         }
+        [Test]
+        public void VerifyRejectsTamperedSignature()
+        {
+            var issuer = new DevLocalJoinTicketIssuer();
+            string ticket = issuer.Issue("account-1", "character-1", "server-1", "world-1", "build-1", TimeSpan.FromSeconds(30), 1000);
+
+            JoinTicketValidationResult result = Verify(TamperSignature(ticket), issuer.PublicKey, "server-1", "build-1", 1001);
+
+            Assert.IsFalse(result.Accepted);
+            Assert.AreEqual(JoinTicketRejectionReason.SignatureInvalid, result.Reason);
+        }
+
 
         private static JoinTicketValidationResult Verify(string ticket, string publicKey, string serverId, string buildId, long nowMs)
         {
             var verifier = new JwsEd25519JoinTicketVerifier();
             var context = new JoinTicketVerificationContext(publicKey, serverId, buildId, characterId => !string.IsNullOrWhiteSpace(characterId), nowMs);
             return verifier.Verify(ticket, context);
+        }
+        private static string TamperSignature(string ticket)
+        {
+            string[] parts = ticket.Split('.');
+            Assert.AreEqual(3, parts.Length);
+            char replacement = parts[2][0] == 'A' ? 'B' : 'A';
+            parts[2] = replacement + parts[2].Substring(1);
+            return string.Join(".", parts);
         }
     }
 }

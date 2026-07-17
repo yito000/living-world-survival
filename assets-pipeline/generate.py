@@ -22,11 +22,20 @@ import sys
 # assets-pipeline をパスに追加（Blender 実行時の cwd に依存しないため）。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from asset_spec import REQUIRED_LOD, ModuleSpec, iter_modules  # noqa: E402
+from asset_spec import (  # noqa: E402
+    COLLIDER_NAME_PREFIX,
+    REQUIRED_LOD,
+    ModuleSpec,
+    iter_modules,
+    required_socket_min,
+    required_sockets,
+)
 
 try:
+    import bmesh  # type: ignore
     import bpy  # type: ignore
 except ImportError:  # Blender 外で import された場合
+    bmesh = None
     bpy = None
 
 
@@ -50,19 +59,39 @@ def _reset_scene() -> None:
     bpy.ops.object.delete(use_global=False)
 
 
+def _socket_location(name: str, size: float) -> tuple[float, float, float]:
+    """Socket 名から決定的な配置座標を返す（未知名は上面中央）。"""
+    if name == "socket_input":
+        # 投入口は前面やや上（production の素材投入を想定）。
+        return (0.0, -size / 2.0, size * 0.75)
+    return (0.0, 0.0, size)
+
+
+def _module_socket_names(kit: str) -> list[str]:
+    """Kit の要求を満たす Socket 名を決定的順序で返す。"""
+    names = list(required_sockets(kit))
+    # 名前指定の無い Kit でも最低個数は満たす（既定は socket_top を補う）。
+    if len(names) < required_socket_min(kit) and "socket_top" not in names:
+        names.insert(0, "socket_top")
+    return names
+
+
 def _build_module(spec: ModuleSpec, size: float) -> dict:
-    """Blender 上に1モジュールを構築し、manifest エントリを返す。"""
+    """Blender 上に1モジュールを構築し、実測値から manifest エントリを返す。"""
     _reset_scene()
 
     # 本体メッシュ（bottom-center pivot にするため原点を底面へ）。
     bpy.ops.mesh.primitive_cube_add(size=size, location=(0, 0, size / 2.0))
-    obj = bpy.context.active_object
-    obj.name = f"{spec.kit}_{spec.name}_{REQUIRED_LOD}"
+    body = bpy.context.active_object
+    body.name = f"{spec.kit}_{spec.name}_{REQUIRED_LOD}"
 
-    # Socket Empty（接続点）。
-    bpy.ops.object.empty_add(type="PLAIN_AXES", location=(0, 0, size))
-    socket = bpy.context.active_object
-    socket.name = "socket_top"
+    # Socket Empty（接続点）。Kit 別の必須 Socket を実際に生成する（3.7-5）。
+    socket_objs = []
+    for socket_name in _module_socket_names(spec.kit):
+        bpy.ops.object.empty_add(type="PLAIN_AXES", location=_socket_location(socket_name, size))
+        socket = bpy.context.active_object
+        socket.name = socket_name
+        socket_objs.append(socket)
 
     # Interaction Point。
     bpy.ops.object.empty_add(type="ARROWS", location=(0, -size / 2.0, size / 2.0))
@@ -72,9 +101,10 @@ def _build_module(spec: ModuleSpec, size: float) -> dict:
     # Collider（別メッシュ、命名規約 UCX_ に準拠）。
     bpy.ops.mesh.primitive_cube_add(size=size, location=(0, 0, size / 2.0))
     collider = bpy.context.active_object
-    collider.name = f"UCX_{spec.kit}_{spec.name}"
+    collider.name = f"{COLLIDER_NAME_PREFIX}{spec.kit}_{spec.name}"
 
-    tri_count = _triangle_count(obj)
+    # ここから先は「実測」のみ。ハードコードすると CI ゲートが自己証明になる（3.7-1）。
+    created = [body, collider, ip, *socket_objs]
 
     return {
         "asset_id": spec.asset_id,
@@ -82,13 +112,57 @@ def _build_module(spec: ModuleSpec, size: float) -> dict:
         "kit": spec.kit,
         "name": spec.name,
         "glb": spec.glb_filename,
-        "triangles": tri_count,
-        "has_collider": True,
-        "sockets": ["socket_top"],
-        "interaction_points": ["ip_use"],
-        "lods": [REQUIRED_LOD],
-        "negative_scale": False,
+        "triangles": _triangle_count(body),
+        "collider_triangles": _triangle_count(collider),
+        "colliders": sorted(
+            o.name for o in created if o.type == "MESH" and _is_collider_name(o.name)
+        ),
+        "has_collider": any(o.type == "MESH" and _is_collider_name(o.name) for o in created),
+        "sockets": sorted(o.name for o in socket_objs),
+        "interaction_points": sorted(
+            o.name for o in created if o.type == "EMPTY" and o.name.startswith("ip_")
+        ),
+        "lods": sorted({_lod_of(o.name) for o in created if o.type == "MESH"} - {""}),
+        "negative_scale": any(_has_negative_scale(o) for o in created),
+        "non_manifold_edges": {
+            "body": _non_manifold_edge_count(body),
+            "collider": _non_manifold_edge_count(collider),
+        },
     }
+
+
+def _is_collider_name(name: str) -> bool:
+    return name.startswith(COLLIDER_NAME_PREFIX)
+
+
+def _lod_of(name: str) -> str:
+    """オブジェクト名末尾の LOD サフィックスを取り出す（無ければ空文字）。"""
+    tail = name.rsplit("_", 1)[-1]
+    return tail if tail.startswith("LOD") else ""
+
+
+def _has_negative_scale(obj) -> bool:
+    """ワールド行列 determinant / スケール符号から負スケールを実測する（3.7-1）。
+
+    ミラー等で負スケールが混入すると法線が反転し Unity 側で裏返るため、
+    生成時点で検出できるようにする。
+    """
+    if obj.matrix_world.determinant() < 0:
+        return True
+    # Empty は行列が単位でも scale だけ負のことがあるため符号も見る。
+    return any(component < 0 for component in obj.matrix_world.to_scale())
+
+
+def _non_manifold_edge_count(obj) -> int:
+    """non-manifold なエッジ数を bmesh で数える（3.7-2）。メッシュ以外は 0。"""
+    if obj.type != "MESH":
+        return 0
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(obj.data)
+        return sum(1 for edge in bm.edges if not edge.is_manifold)
+    finally:
+        bm.free()
 
 
 def _triangle_count(obj) -> int:

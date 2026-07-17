@@ -69,4 +69,21 @@ for t in "${targets[@]}"; do
       ;;
   esac
 done
+
+# M7（10B 3.1/3.2/3.4）の harness スクリプト（scripts/*.py）は独立した
+# pyproject を持たないため上の targets ループに乗らない。worldstate の venv に
+# ある ruff を借りて、同じ規約（line-length 100 / E,F,I,UP,B）で lint する。
+if [ "$cmd" = "lint" ]; then
+  m7_scripts=(load_assert.py soak_assert.py recovery_assert.py)
+  present=()
+  for f in "${m7_scripts[@]}"; do
+    [ -f "scripts/$f" ] && present+=("scripts/$f")
+  done
+  if [ "${#present[@]}" -gt 0 ]; then
+    echo "== python lint: scripts (M7 harness) =="
+    ensure_env services/worldstate
+    run_in services/worldstate ruff check \
+      --line-length 100 --select E,F,I,UP,B "${present[@]/#/$PWD/}"
+  fi
+fi
 echo "ci_python.sh ${cmd}: OK"

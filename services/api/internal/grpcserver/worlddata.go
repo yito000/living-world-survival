@@ -10,13 +10,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"log"
 	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"living-world-survival/services/api/internal/metrics"
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
@@ -34,19 +35,20 @@ func (s *WorldDataServer) LoadBootstrap(ctx context.Context, req *survivalv1.Loa
 	if worldID == "" {
 		return nil, status.Error(codes.InvalidArgument, "world_id is required")
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{WorldID: worldID})
 
 	boot, err := s.Store.LoadWorldBootstrap(ctx, worldID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, status.Errorf(codes.NotFound, "world %s not found", worldID)
 	}
 	if err != nil {
-		log.Printf("grpc: LoadBootstrap: %v", err)
+		obs.L(ctx).Error("load bootstrap failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "load bootstrap failed")
 	}
 
 	tail, err := s.Store.LoadEventTail(ctx, worldID, boot.Sequence)
 	if err != nil {
-		log.Printf("grpc: LoadBootstrap tail: %v", err)
+		obs.L(ctx).Error("load event tail failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "load event tail failed")
 	}
 
@@ -54,12 +56,12 @@ func (s *WorldDataServer) LoadBootstrap(ctx context.Context, req *survivalv1.Loa
 	// bootstrap so it caches the authoritative quantities/recipes (3.4 / 06A 0.4-2).
 	master, err := s.Store.LoadMasterData(ctx, worldID)
 	if err != nil {
-		log.Printf("grpc: LoadBootstrap master data: %v", err)
+		obs.L(ctx).Error("load master data failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "load master data failed")
 	}
 	masterJSON, err := json.Marshal(master)
 	if err != nil {
-		log.Printf("grpc: LoadBootstrap marshal master: %v", err)
+		obs.L(ctx).Error("marshal master data failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "marshal master data failed")
 	}
 
@@ -83,7 +85,7 @@ func (s *WorldDataServer) LoadBootstrap(ctx context.Context, req *survivalv1.Loa
 	}
 	// server_build is recorded for future compatibility checks (3.2 step 4).
 	if b := req.GetServerBuild(); b != "" {
-		log.Printf("grpc: LoadBootstrap world=%s server_build=%s tail=%d", worldID, b, len(tail))
+		obs.L(ctx).Info("bootstrap loaded", "server_build", b, "tail", len(tail))
 	}
 	return resp, nil
 }
@@ -92,6 +94,8 @@ func (s *WorldDataServer) LoadBootstrap(ctx context.Context, req *survivalv1.Loa
 // assigning the world-wide sequence on the API side (3.3). Each event gets an
 // independent ResultStatus in the same order as the request.
 func (s *WorldDataServer) AppendEvents(ctx context.Context, req *survivalv1.AppendEventsRequest) (*survivalv1.AppendEventsResponse, error) {
+	ctx = obs.WithFields(ctx, obs.Fields{ServerID: req.GetServerId()})
+
 	protoEvents := req.GetEvents()
 	inputs := make([]store.EventInput, 0, len(protoEvents))
 	for _, e := range protoEvents {
@@ -108,7 +112,7 @@ func (s *WorldDataServer) AppendEvents(ctx context.Context, req *survivalv1.Appe
 
 	outcomes, err := s.Store.AppendEvents(ctx, inputs)
 	if err != nil {
-		log.Printf("grpc: AppendEvents (server=%s): %v", req.GetServerId(), err)
+		obs.L(ctx).Error("append events failed", "error", err.Error(), "events", len(inputs))
 		return nil, status.Error(codes.Internal, "append events failed")
 	}
 
@@ -136,6 +140,7 @@ func (s *WorldDataServer) SaveSnapshot(ctx context.Context, req *survivalv1.Save
 	if worldID == "" {
 		return nil, status.Error(codes.InvalidArgument, "world_id is required")
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{WorldID: worldID})
 
 	if !checksumMatches(req.GetPayload(), req.GetChecksum()) {
 		return nil, status.Error(codes.InvalidArgument, "snapshot checksum mismatch")
@@ -146,9 +151,11 @@ func (s *WorldDataServer) SaveSnapshot(ctx context.Context, req *survivalv1.Save
 		return nil, status.Errorf(codes.NotFound, "world %s not found", worldID)
 	}
 	if err != nil {
-		log.Printf("grpc: SaveSnapshot: %v", err)
+		obs.L(ctx).Error("save snapshot failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "save snapshot failed")
 	}
+	// active ポインタまで切り替わった成功パスだけを数える（第13章 / 10B 3.1）。
+	metrics.SnapshotsSaved.Inc()
 	return &survivalv1.SaveSnapshotResponse{SnapshotId: snapshotID}, nil
 }
 

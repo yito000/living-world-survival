@@ -7,12 +7,12 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
-	"log"
+	"flag"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -28,34 +28,57 @@ import (
 	"living-world-survival/services/api/internal/economy"
 	"living-world-survival/services/api/internal/grpcserver"
 	"living-world-survival/services/api/internal/itemdef"
+	"living-world-survival/services/api/internal/metrics"
 	"living-world-survival/services/api/internal/outbox"
 	"living-world-survival/services/api/internal/ranking"
 	"living-world-survival/services/api/internal/store"
 	"living-world-survival/services/api/internal/worldevent"
+	"living-world-survival/services/common/obs"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
+// healthcheckFlag は Docker の HEALTHCHECK 用の自己診断モード（3.8）。
+// 実行イメージは distroless/static で shell も curl も無いため、バイナリ自身が
+// 自分の /readyz を叩いて 200 なら 0、それ以外なら 1 で終了する。
+var healthcheckFlag = flag.Bool("healthcheck", false,
+	"probe this service's own /readyz and exit 0 (ready) / 1 (not ready)")
+
 func main() {
+	flag.Parse()
+	// healthcheck は DB/NATS のセットアップより前に完結させる。ここより後ろに
+	// 置くと healthcheck プロセスが interval ごとに pgx pool を開き、接続数を
+	// 食い潰す。
+	if *healthcheckFlag {
+		os.Exit(runHealthcheck(config.Load().HTTPAddr))
+	}
+
+	log := obs.Init("api")
 	cfg := config.Load()
 
 	// Item Definition master is a deterministic config file; fail fast if it is
 	// missing or invalid (3.8 / DoD).
 	catalog, err := itemdef.Load(cfg.ItemDefPath)
 	if err != nil {
-		log.Fatalf("apid: item definitions: %v", err)
+		log.Error("item definitions", "error", err.Error())
+		os.Exit(1)
 	}
-	log.Printf("apid: loaded %d item definitions from %s", catalog.Len(), cfg.ItemDefPath)
+	log.Info("loaded item definitions", "count", catalog.Len(), "path", cfg.ItemDefPath)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := newPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("apid: failed to create pgx pool: %v", err)
+		log.Error("failed to create pgx pool", "error", err.Error())
+		os.Exit(1)
 	}
 	defer pool.Close()
 
 	st := store.New(pool)
+
+	// Outbox depth / event lag は一定間隔でサンプリングして Gauge へ載せる
+	// （10B 3.2 / 3.5）。スクレイプのたびに DB を叩かない。
+	go metrics.NewSampler(st, cfg.MetricsSampleInterval).Run(ctx)
 
 	// Seed the Item Definition master into Postgres with retry (DB may not be
 	// ready yet). Non-fatal: the RPC surface does not depend on the DB seed.
@@ -72,7 +95,8 @@ func main() {
 	// table is a startup failure rather than a failed purchase at runtime.
 	economyServer, err := economy.NewServer(st, catalog)
 	if err != nil {
-		log.Fatalf("apid: economy: %v", err)
+		log.Error("economy", "error", err.Error())
+		os.Exit(1)
 	}
 
 	// The asset ranking batch is heavy, so it runs on its own goroutine and never
@@ -97,25 +121,28 @@ func main() {
 	grpcSrv := newGRPCServer(cfg, st, weServer, economyServer)
 
 	go func() {
-		log.Printf("apid: HTTP listening on %s", cfg.HTTPAddr)
+		log.Info("HTTP listening", "addr", cfg.HTTPAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("apid: http server error: %v", err)
+			log.Error("http server error", "error", err.Error())
+			os.Exit(1)
 		}
 	}()
 
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatalf("apid: gRPC listen %s: %v", cfg.GRPCAddr, err)
+		log.Error("gRPC listen failed", "addr", cfg.GRPCAddr, "error", err.Error())
+		os.Exit(1)
 	}
 	go func() {
-		log.Printf("apid: gRPC listening on %s", cfg.GRPCAddr)
+		log.Info("gRPC listening", "addr", cfg.GRPCAddr)
 		if err := grpcSrv.Serve(grpcLis); err != nil && !errors.Is(err, grpclib.ErrServerStopped) {
-			log.Fatalf("apid: grpc server error: %v", err)
+			log.Error("grpc server error", "error", err.Error())
+			os.Exit(1)
 		}
 	}()
 
 	waitForSignal()
-	cancel() // stop background workers (relay, seeding)
+	cancel() // stop background workers (relay, seeding, sampler)
 
 	if c := nc.Load(); c != nil {
 		c.Close()
@@ -123,45 +150,95 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("apid: http graceful shutdown failed: %v", err)
+		log.Warn("http graceful shutdown failed", "error", err.Error())
 	}
 	grpcSrv.GracefulStop()
-	log.Printf("apid: stopped")
+	log.Info("stopped")
+}
+
+// runHealthcheck GETs /readyz on this process's own listen port and returns the
+// exit code Docker's HEALTHCHECK expects（200=0 / それ以外=1）。
+// /readyz は依存断（DB/NATS）で 503 を返すので、その間コンテナは unhealthy に
+// なる。RC ではそれが意図（トラフィックを止める）で、再起動の引き金にはしない。
+func runHealthcheck(httpAddr string) int {
+	port := httpAddr
+	if _, p, err := net.SplitHostPort(httpAddr); err == nil {
+		port = p
+	}
+	port = strings.TrimPrefix(port, ":")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/readyz", nil)
+	if err != nil {
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
+// newPool は DB プールを作り、全クエリの所要時間を metrics へ記録する
+// QueryTracer を挿す（第13章 DB latency）。各 store メソッドに計測を撒くと
+// 撒き忘れた経路が黙って計測から漏れるので、pool へ 1 箇所で入れる。
+func newPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ConnConfig.Tracer = obs.QueryTracer{}
+	return pgxpool.NewWithConfig(ctx, cfg)
+}
+
+// knownRoutes は metrics の route ラベルに出してよいパス（未知パスで
+// 時系列が増え続けるのを防ぐ）。
+var knownRoutes = map[string]bool{
+	"/healthz": true, "/readyz": true, "/metrics": true, "/admin/ranking/run": true,
+}
+
+func routeLabel(r *http.Request) string {
+	if knownRoutes[r.URL.Path] {
+		return r.URL.Path
+	}
+	return "other"
 }
 
 func newHTTPServer(cfg *config.Config, pool *pgxpool.Pool, nc *atomic.Pointer[nats.Conn], rankingBatch *ranking.Batch) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, `{"status":"ok","service":"api"}`)
-	})
+	mux.HandleFunc("/healthz", obs.LivenessHandler("api"))
 	mux.HandleFunc("/admin/ranking/run", adminRankingHandler(rankingBatch))
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(pingCtx); err != nil {
-			log.Printf("apid: readiness DB ping failed: %v", err)
-			writeJSON(w, http.StatusServiceUnavailable, `{"status":"unavailable","dependency":"postgres"}`)
-			return
-		}
-		if c := nc.Load(); c == nil || !c.IsConnected() {
-			writeJSON(w, http.StatusServiceUnavailable, `{"status":"unavailable","dependency":"nats"}`)
-			return
-		}
-		writeJSON(w, http.StatusOK, `{"status":"ready","dependency":"postgres,nats"}`)
-	})
+	mux.HandleFunc("/readyz", obs.ReadinessHandler(
+		obs.Check{Name: "postgres", Probe: pool.Ping},
+		obs.Check{Name: "nats", Probe: func(context.Context) error {
+			if c := nc.Load(); c == nil || !c.IsConnected() {
+				return errors.New("not connected")
+			}
+			return nil
+		}},
+	))
+	// /metrics は負荷/Soak ハーネスがスクレイプする（10B 3.1/3.2）。
+	mux.Handle("/metrics", obs.MetricsHandler())
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           obs.Middleware(routeLabel)(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 }
 
 func newGRPCServer(cfg *config.Config, st *store.Store, we *worldevent.Server, ec *economy.Server) *grpclib.Server {
-	var opts []grpclib.ServerOption
+	// 相関 ID/計測は常に、共有シークレット検証は設定時のみ。認証を先に置くと
+	// 未認証リクエストが計測から漏れる。
+	interceptors := []grpclib.UnaryServerInterceptor{obs.UnaryServerInterceptor()}
 	if cfg.GRPCSharedSecret != "" {
-		opts = append(opts, grpclib.UnaryInterceptor(sharedSecretInterceptor(cfg.GRPCSharedSecret)))
+		interceptors = append(interceptors, sharedSecretInterceptor(cfg.GRPCSharedSecret))
 	}
-	s := grpclib.NewServer(opts...)
+	s := grpclib.NewServer(grpclib.ChainUnaryInterceptor(interceptors...))
 	survivalv1.RegisterWorldDataServiceServer(s, &grpcserver.WorldDataServer{Store: st})
 	survivalv1.RegisterActorStateServiceServer(s, &grpcserver.ActorStateServer{Store: st})
 	survivalv1.RegisterWorldEventServiceServer(s, we)
@@ -175,7 +252,7 @@ func newGRPCServer(cfg *config.Config, st *store.Store, we *worldevent.Server, e
 func adminRankingHandler(b *ranking.Batch) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			writeJSON(w, http.StatusMethodNotAllowed, `{"error":"POST required"}`)
+			obs.WriteJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "POST required"})
 			return
 		}
 		// Detach from the request: the run must survive the client hanging up, and
@@ -185,16 +262,20 @@ func adminRankingHandler(b *ranking.Batch) http.HandlerFunc {
 
 		res, err := b.Run(runCtx)
 		if errors.Is(err, ranking.ErrAlreadyRunning) {
-			writeJSON(w, http.StatusConflict, `{"status":"already_running"}`)
+			metrics.RankingRuns.WithLabelValues("already_running").Inc()
+			obs.WriteJSON(w, http.StatusConflict, map[string]string{"status": "already_running"})
 			return
 		}
 		if err != nil {
-			log.Printf("apid: ranking run failed: %v", err)
-			writeJSON(w, http.StatusInternalServerError, `{"status":"failed"}`)
+			metrics.RankingRuns.WithLabelValues("failed").Inc()
+			obs.L(r.Context()).Error("ranking run failed", "error", err.Error())
+			obs.WriteJSON(w, http.StatusInternalServerError, map[string]string{"status": "failed"})
 			return
 		}
-		writeJSON(w, http.StatusOK, fmt.Sprintf(
-			`{"status":"ok","price_version":%d,"owners":%d}`, res.PriceVersion, res.OwnerCount))
+		metrics.RankingRuns.WithLabelValues("ok").Inc()
+		obs.WriteJSON(w, http.StatusOK, map[string]any{
+			"status": "ok", "price_version": res.PriceVersion, "owners": res.OwnerCount,
+		})
 	}
 }
 
@@ -206,7 +287,7 @@ func startWorldEventApprover(ctx context.Context, nc *nats.Conn, st *store.Store
 	we.SetResults(results)
 	approver := worldevent.NewApprover(nc, st, results)
 	if err := approver.Start(ctx); err != nil {
-		log.Printf("apid: world event approver disabled: %v", err)
+		obs.L(ctx).Warn("world event approver disabled", "error", err.Error())
 		return
 	}
 	go func() {
@@ -218,18 +299,18 @@ func startWorldEventApprover(ctx context.Context, nc *nats.Conn, st *store.Store
 func startRelay(ctx context.Context, nc *nats.Conn, st *store.Store, cfg *config.Config) {
 	pub, err := outbox.NewJetStreamPublisher(nc)
 	if err != nil {
-		log.Printf("apid: outbox relay disabled: %v", err)
+		obs.L(ctx).Warn("outbox relay disabled", "error", err.Error())
 		return
 	}
 	relay := outbox.NewRelay(st, pub, cfg.OutboxInterval, 100)
-	log.Printf("apid: outbox relay started (interval=%s)", cfg.OutboxInterval)
+	obs.L(ctx).Info("outbox relay started", "interval", cfg.OutboxInterval.String())
 	relay.Run(ctx)
 }
 
 func seedItemDefinitions(ctx context.Context, catalog *itemdef.Catalog, st *store.Store) {
 	for {
 		if err := catalog.Seed(ctx, st); err != nil {
-			log.Printf("apid: item definition seed failed (%v), retrying...", err)
+			obs.L(ctx).Warn("item definition seed failed, retrying", "error", err.Error())
 			select {
 			case <-ctx.Done():
 				return
@@ -237,7 +318,7 @@ func seedItemDefinitions(ctx context.Context, catalog *itemdef.Catalog, st *stor
 				continue
 			}
 		}
-		log.Printf("apid: seeded %d item definitions", catalog.Len())
+		obs.L(ctx).Info("seeded item definitions", "count", catalog.Len())
 		return
 	}
 }
@@ -268,23 +349,15 @@ func connectNATS(ctx context.Context, url string, dst *atomic.Pointer[nats.Conn]
 		)
 		if err == nil {
 			dst.Store(c)
-			log.Printf("apid: connected to NATS at %s", url)
+			obs.L(ctx).Info("connected to NATS", "url", url)
 			return
 		}
-		log.Printf("apid: NATS connect failed (%v), retrying...", err)
+		obs.L(ctx).Warn("NATS connect failed, retrying", "error", err.Error())
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(2 * time.Second):
 		}
-	}
-}
-
-func writeJSON(w http.ResponseWriter, status int, body string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if _, err := w.Write([]byte(body)); err != nil {
-		log.Printf("apid: write response failed: %v", err)
 	}
 }
 

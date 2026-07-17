@@ -1,16 +1,17 @@
 // Command authd is the Auth / Matchmaking service. It serves the Client-facing
-// REST API and liveness/readiness on AUTH_PORT, and the internal
-// MatchmakingService gRPC on AUTH_GRPC_PORT (M1).
+// REST API, liveness/readiness and Prometheus metrics on AUTH_PORT, and the
+// internal MatchmakingService gRPC on AUTH_GRPC_PORT (M1).
 package main
 
 import (
 	"context"
 	"errors"
-	"log"
+	"flag"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,19 +27,38 @@ import (
 	"living-world-survival/services/auth/internal/store"
 	"living-world-survival/services/auth/internal/ticket"
 	"living-world-survival/services/auth/internal/token"
+	"living-world-survival/services/common/obs"
+	"living-world-survival/services/common/ratelimit"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
+// healthcheckFlag は Docker の HEALTHCHECK 用の自己診断モード（3.8）。
+// 実行イメージは distroless/static で shell も curl も無いため、バイナリ自身が
+// 自分の /readyz を叩いて 200 なら 0、それ以外なら 1 で終了する。
+var healthcheckFlag = flag.Bool("healthcheck", false,
+	"probe this service's own /readyz and exit 0 (ready) / 1 (not ready)")
+
 func main() {
+	flag.Parse()
+	// healthcheck は DB 接続より前に完結させる。ここより後ろに置くと
+	// healthcheck プロセスが interval ごとに pgx pool を開き、接続数を食い潰す。
+	if *healthcheckFlag {
+		os.Exit(runHealthcheck(healthcheckAddr()))
+	}
+
+	log := obs.Init("auth")
+
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("authd: config: %v", err)
+		log.Error("config", "error", err.Error())
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	pool, err := newPool(ctx, cfg.DatabaseURL)
 	if err != nil {
-		log.Fatalf("authd: failed to create pgx pool: %v", err)
+		log.Error("failed to create pgx pool", "error", err.Error())
+		os.Exit(1)
 	}
 	defer pool.Close()
 
@@ -46,26 +66,40 @@ func main() {
 	tokens := token.NewService(cfg.JWTSigningKey, cfg.AccessTokenTTL, cfg.RefreshTokenTTL, st)
 	tickets := ticket.NewSigner(cfg.JoinTicketPrivateKey, cfg.JoinTicketPublicKey, cfg.JoinTicketTTL)
 
-	httpSrv := newHTTPServer(cfg, pool, &rest.Server{Store: st, Tokens: tokens, Tickets: tickets})
+	restSrv := &rest.Server{
+		Store: st, Tokens: tokens, Tickets: tickets,
+		// Rate Limit（第16章 / MVP-SEC-005）。閾値は Config Default（3.4）。
+		LoginLimiter: ratelimit.New(cfg.LoginRate, cfg.LoginRateWindow, cfg.LoginRateBurst),
+		AccountLimiter: ratelimit.New(
+			cfg.AccountCreateRate, cfg.AccountCreateWindow, cfg.AccountCreateRate),
+	}
+	log.Info("rate limits configured",
+		"login_rate", cfg.LoginRate, "login_window", cfg.LoginRateWindow.String(),
+		"account_create_rate", cfg.AccountCreateRate)
+
+	httpSrv := newHTTPServer(cfg, pool, restSrv)
 	grpcSrv := newGRPCServer(cfg, &authgrpc.Server{Store: st, Tickets: tickets})
 
-	// REST + health on AUTH_PORT.
+	// REST + health + metrics on AUTH_PORT.
 	go func() {
-		log.Printf("authd: REST listening on %s", cfg.HTTPAddr)
+		log.Info("REST listening", "addr", cfg.HTTPAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("authd: http server error: %v", err)
+			log.Error("http server error", "error", err.Error())
+			os.Exit(1)
 		}
 	}()
 
 	// Internal gRPC on AUTH_GRPC_PORT.
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
-		log.Fatalf("authd: gRPC listen %s: %v", cfg.GRPCAddr, err)
+		log.Error("gRPC listen failed", "addr", cfg.GRPCAddr, "error", err.Error())
+		os.Exit(1)
 	}
 	go func() {
-		log.Printf("authd: gRPC listening on %s", cfg.GRPCAddr)
+		log.Info("gRPC listening", "addr", cfg.GRPCAddr)
 		if err := grpcSrv.Serve(grpcLis); err != nil && !errors.Is(err, grpclib.ErrServerStopped) {
-			log.Fatalf("authd: grpc server error: %v", err)
+			log.Error("grpc server error", "error", err.Error())
+			os.Exit(1)
 		}
 	}()
 
@@ -74,43 +108,108 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("authd: http graceful shutdown failed: %v", err)
+		log.Warn("http graceful shutdown failed", "error", err.Error())
 	}
 	grpcSrv.GracefulStop()
-	log.Printf("authd: stopped")
+	log.Info("stopped")
+}
+
+// healthcheckAddr は healthcheck が叩く待受アドレスを返す。config.Load() は
+// secret 未設定でエラーになるが healthcheck 自体は secret を必要としないため、
+// その場合はサーバ本体と同じ既定で AUTH_PORT だけを解決する。
+func healthcheckAddr() string {
+	if cfg, err := config.Load(); err == nil {
+		return cfg.HTTPAddr
+	}
+	port := strings.TrimSpace(os.Getenv("AUTH_PORT"))
+	if port == "" {
+		port = "8081"
+	}
+	return ":" + port
+}
+
+// runHealthcheck GETs /readyz on this process's own listen port and returns the
+// exit code Docker's HEALTHCHECK expects（200=0 / それ以外=1）。
+// /readyz は依存断（DB）で 503 を返すので、その間コンテナは unhealthy になる。
+// RC ではそれが意図（トラフィックを止める）で、再起動の引き金にはしない。
+func runHealthcheck(httpAddr string) int {
+	port := httpAddr
+	if _, p, err := net.SplitHostPort(httpAddr); err == nil {
+		port = p
+	}
+	port = strings.TrimPrefix(port, ":")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/readyz", nil)
+	if err != nil {
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
+}
+
+// newPool は DB プールを作り、全クエリの所要時間を metrics へ記録する
+// QueryTracer を挿す（第13章 DB latency）。各 store メソッドに計測を撒くと
+// 撒き忘れた経路が黙って計測から漏れるので、pool へ 1 箇所で入れる。
+func newPool(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ConnConfig.Tracer = obs.QueryTracer{}
+	return pgxpool.NewWithConfig(ctx, cfg)
+}
+
+// knownRoutes は metrics の route ラベルに出してよいパス。未知のパスを
+// そのまま label にすると、スキャン等の任意パスで時系列が無限に増える。
+var knownRoutes = map[string]bool{
+	"/healthz": true, "/readyz": true, "/metrics": true,
+	"/v1/accounts": true, "/v1/sessions": true, "/v1/sessions/refresh": true,
+	"/v1/sessions/current": true, "/v1/matchmaking/join": true,
+}
+
+func routeLabel(r *http.Request) string {
+	if knownRoutes[r.URL.Path] {
+		return r.URL.Path
+	}
+	return "other"
 }
 
 func newHTTPServer(cfg *config.Config, pool *pgxpool.Pool, restSrv *rest.Server) *http.Server {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeRawJSON(w, http.StatusOK, `{"status":"ok","service":"auth"}`)
-	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(pingCtx); err != nil {
-			log.Printf("authd: readiness DB ping failed: %v", err)
-			writeRawJSON(w, http.StatusServiceUnavailable, `{"status":"unavailable","dependency":"postgres"}`)
-			return
-		}
-		writeRawJSON(w, http.StatusOK, `{"status":"ready","dependency":"postgres"}`)
-	})
+	mux.HandleFunc("/healthz", obs.LivenessHandler("auth"))
+	mux.HandleFunc("/readyz", obs.ReadinessHandler(obs.Check{
+		Name:  "postgres",
+		Probe: pool.Ping,
+	}))
+	// /metrics は負荷/Soak ハーネスがスクレイプする（10B 3.1/3.2）。
+	mux.Handle("/metrics", obs.MetricsHandler())
 	// Client-facing REST (/v1/...). The inner mux matches method + full path.
 	mux.Handle("/v1/", restSrv.Handler())
 
 	return &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           mux,
+		Handler:           obs.Middleware(routeLabel)(mux),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 }
 
 func newGRPCServer(cfg *config.Config, mm survivalv1.MatchmakingServiceServer) *grpclib.Server {
-	var opts []grpclib.ServerOption
+	// 相関 ID/計測は常に、共有シークレット検証は設定時のみ。順序が重要で、
+	// 認証を先に置くと未認証リクエストが計測されない。
+	interceptors := []grpclib.UnaryServerInterceptor{obs.UnaryServerInterceptor()}
 	if cfg.GRPCSharedSecret != "" {
-		opts = append(opts, grpclib.UnaryInterceptor(sharedSecretInterceptor(cfg.GRPCSharedSecret)))
+		interceptors = append(interceptors, sharedSecretInterceptor(cfg.GRPCSharedSecret))
 	}
-	s := grpclib.NewServer(opts...)
+	s := grpclib.NewServer(grpclib.ChainUnaryInterceptor(interceptors...))
 	survivalv1.RegisterMatchmakingServiceServer(s, mm)
 	return s
 }
@@ -126,14 +225,6 @@ func sharedSecretInterceptor(secret string) grpclib.UnaryServerInterceptor {
 			return nil, status.Error(codes.Unauthenticated, "missing or invalid service credential")
 		}
 		return handler(ctx, req)
-	}
-}
-
-func writeRawJSON(w http.ResponseWriter, status int, body string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if _, err := w.Write([]byte(body)); err != nil {
-		log.Printf("authd: write response failed: %v", err)
 	}
 }
 

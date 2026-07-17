@@ -1,0 +1,99 @@
+# M7 夜間ジョブ（10B 3.6 / L-10）。
+#
+# PR を止めない重い検査をここへ寄せる:
+#   - load        : AT-020 目標スケール（16 Player / 20 AI / 80 Animals）
+#   - soak-short  : 短縮 Soak（既定10分）。full Soak（4h）は手動 dispatch でのみ。
+#   - recovery    : 再起動復旧 5 シナリオ（AT-018/019）
+#   - Network E2E : 2 Client + DS + Backend（第18.1）— Client/DS 側は 10A 管轄
+#
+# レポートは build/reports/ をアーティファクト化して、Gate 未達を数値付きで
+# 追えるようにする（第19.1 / AT-020: 未達は既知 Issue として数値付きで残す）。
+name: nightly
+
+on:
+  schedule:
+    # 03:00 JST = 18:00 UTC（前日）。PR の少ない時間帯に回す。
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+    inputs:
+      soak_minutes:
+        description: "短縮 Soak の分数（full 4h 相当は 240）"
+        required: false
+        default: "10"
+      run_full_soak:
+        description: "full Soak（SOAK_HOURS=4）を回す"
+        type: boolean
+        required: false
+        default: false
+
+# 夜間ジョブが重なると互いのコンテナを奪い合うので直列化する。
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  hardening:
+    runs-on: ubuntu-latest
+    # full Soak(4h) + 負荷 + 復旧。既定の 360 分では足りない場合があるので明示。
+    timeout-minutes: 420
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: install uv
+        run: pip install uv
+
+      # compose で postgres/nats/サービスを立てる（ci.yml の service container と
+      # 違い、recovery が「NATS/DB を落として復旧させる」ため compose が要る）。
+      - name: bring up infra
+        run: |
+          cp .env.example .env
+          make up
+          make migrate
+
+      - name: security
+        run: make security
+
+      # recovery は DS 成果物が無くてもバックエンド側シナリオ（NATS/DB 再起動・
+      # Corrupt Snapshot・購入冪等）を回せる。DS crash シナリオは DS があるときだけ。
+      - name: recovery
+        run: make recovery
+
+      - name: load (AT-020 目標スケール)
+        run: make load-at020
+
+      - name: soak-short
+        if: ${{ !inputs.run_full_soak }}
+        run: SOAK_MINUTES=${{ inputs.soak_minutes || '10' }} make soak-short
+
+      - name: soak-full
+        if: ${{ inputs.run_full_soak }}
+        run: SOAK_HOURS=4 make soak-full
+
+      # サービスログも残す。リーク疑いの切り分け（どのサービスか）に要る。
+      - name: collect service logs
+        if: always()
+        run: |
+          mkdir -p build/reports/logs
+          docker compose -f infra/docker-compose.yml logs --no-color --tail 5000 \
+            > build/reports/logs/compose.log 2>&1 || true
+
+      - name: upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-reports-${{ github.run_number }}
+          path: build/reports/
+          retention-days: 30
+          if-no-files-found: warn
+
+      - name: teardown
+        if: always()
+        run: make down || true

@@ -3,18 +3,22 @@
 package rest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
 	"time"
 
+	"living-world-survival/services/auth/internal/metrics"
 	"living-world-survival/services/auth/internal/password"
 	"living-world-survival/services/auth/internal/store"
 	"living-world-survival/services/auth/internal/ticket"
 	"living-world-survival/services/auth/internal/token"
+	"living-world-survival/services/common/obs"
+	"living-world-survival/services/common/ratelimit"
 )
 
 // Server holds the dependencies of the REST handlers.
@@ -22,6 +26,12 @@ type Server struct {
 	Store   *store.Store
 	Tokens  *token.Service
 	Tickets *ticket.Signer
+
+	// LoginLimiter はログイン失敗の Rate Limit（第16章 / MVP-SEC-005）。
+	// nil なら制限なし（ratelimit.Limiter は nil レシーバで常に許可する）。
+	LoginLimiter *ratelimit.Limiter
+	// AccountLimiter はアカウント作成の Rate Limit。
+	AccountLimiter *ratelimit.Limiter
 }
 
 // Handler returns the routed http.Handler for the /v1 REST surface. It is
@@ -49,6 +59,14 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	// 総当り登録の抑止。作成は成功しても資源を食うので、試行そのものを数える。
+	if !s.AccountLimiter.Allow(clientIP(r)) {
+		metrics.RateLimited.WithLabelValues("account_create").Inc()
+		obs.L(r.Context()).Warn("account create rate limited", "audit", true)
+		writeError(w, http.StatusTooManyRequests, "rate_limited",
+			"too many account creations; try again later")
+		return
+	}
 	if _, err := mail.ParseAddress(req.Email); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_email", "email is not a valid address")
 		return
@@ -59,7 +77,7 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	hash, err := password.Hash(req.Password)
 	if err != nil {
-		serverError(w, "hash password", err)
+		serverError(r.Context(), w, "hash password", err)
 		return
 	}
 	accountID, err := s.Store.CreateAccount(r.Context(), req.Email, hash, req.DisplayName)
@@ -68,9 +86,12 @@ func (s *Server) handleCreateAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		serverError(w, "create account", err)
+		serverError(r.Context(), w, "create account", err)
 		return
 	}
+	// email は個人情報なのでログに出さない。account_id で相関する。
+	obs.L(obs.WithFields(r.Context(), obs.Fields{AccountID: accountID})).
+		Info("account created")
 	writeJSON(w, http.StatusCreated, map[string]string{"account_id": accountID})
 }
 
@@ -92,24 +113,46 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+
+	// 第16章 Auth 失敗の Rate Limit。失敗だけを数え、成功は消費しない
+	// （正規利用者は何回ログインしても遮断されない）。
+	limitKey := clientIP(r)
+	if !s.LoginLimiter.Peek(limitKey) {
+		metrics.LoginAttempts.WithLabelValues("rate_limited").Inc()
+		metrics.RateLimited.WithLabelValues("login").Inc()
+		obs.L(r.Context()).Warn("login rate limited", "audit", true)
+		writeError(w, http.StatusTooManyRequests, "rate_limited",
+			"too many failed login attempts; try again later")
+		return
+	}
+
 	cred, err := s.Store.GetCredentialByEmail(r.Context(), req.Email)
 	if errors.Is(err, store.ErrNotFound) {
+		// 存在しない email と誤ったパスワードは同じ応答にする（列挙防止）。
+		s.LoginLimiter.Consume(limitKey)
+		loginFailed(r.Context())
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "email or password is incorrect")
 		return
 	}
 	if err != nil {
-		serverError(w, "lookup credential", err)
+		// DB 障害は利用者の失敗ではないのでトークンを消費しない。
+		serverError(r.Context(), w, "lookup credential", err)
 		return
 	}
 	if err := password.Verify(req.Password, cred.PasswordHash); err != nil {
+		s.LoginLimiter.Consume(limitKey)
+		loginFailed(obs.WithFields(r.Context(), obs.Fields{AccountID: cred.AccountID}))
 		writeError(w, http.StatusUnauthorized, "invalid_credentials", "email or password is incorrect")
 		return
 	}
 	pair, err := s.Tokens.NewSession(r.Context(), cred.AccountID)
 	if err != nil {
-		serverError(w, "issue session", err)
+		serverError(r.Context(), w, "issue session", err)
 		return
 	}
+	metrics.LoginAttempts.WithLabelValues("success").Inc()
+	obs.L(obs.WithFields(r.Context(), obs.Fields{AccountID: cred.AccountID})).
+		Info("login succeeded", "audit", true)
 	writeJSON(w, http.StatusOK, tokenPairResp{pair.AccessToken, pair.RefreshToken, pair.ExpiresIn})
 }
 
@@ -129,14 +172,24 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	pair, err := s.Tokens.Refresh(r.Context(), req.RefreshToken)
-	if errors.Is(err, token.ErrInvalidRefresh) || errors.Is(err, token.ErrReuseDetected) {
+	if errors.Is(err, token.ErrReuseDetected) {
+		// 再利用検知＝family 失効（RFC 9700 / MVP-SEC-003）。盗用の可能性が
+		// あるので、単なる無効トークンとは別系列で監査に残す。
+		metrics.RefreshRotations.WithLabelValues("reuse_detected").Inc()
+		obs.L(r.Context()).Warn("refresh token reuse detected; family revoked", "audit", true)
+		writeError(w, http.StatusUnauthorized, "invalid_refresh", "refresh token is invalid, expired, or reused")
+		return
+	}
+	if errors.Is(err, token.ErrInvalidRefresh) {
+		metrics.RefreshRotations.WithLabelValues("invalid").Inc()
 		writeError(w, http.StatusUnauthorized, "invalid_refresh", "refresh token is invalid, expired, or reused")
 		return
 	}
 	if err != nil {
-		serverError(w, "refresh session", err)
+		serverError(r.Context(), w, "refresh session", err)
 		return
 	}
+	metrics.RefreshRotations.WithLabelValues("rotated").Inc()
 	writeJSON(w, http.StatusOK, tokenPairResp{pair.AccessToken, pair.RefreshToken, pair.ExpiresIn})
 }
 
@@ -148,7 +201,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Tokens.Logout(r.Context(), claims.FamilyID); err != nil {
-		serverError(w, "logout", err)
+		serverError(r.Context(), w, "logout", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -187,22 +240,25 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	srv, err := s.Store.SelectReadyServer(r.Context(), req.BuildID)
+	ctx := obs.WithFields(r.Context(), obs.Fields{AccountID: claims.Subject})
+
+	srv, err := s.Store.SelectReadyServer(ctx, req.BuildID)
 	if errors.Is(err, store.ErrNoServer) {
 		writeError(w, http.StatusServiceUnavailable, "no_server", "no ready server for this build")
 		return
 	}
 	if err != nil {
-		serverError(w, "select server", err)
+		serverError(ctx, w, "select server", err)
 		return
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{ServerID: srv.ServerID, WorldID: srv.WorldID})
 
 	tc, tok, err := s.Tickets.Issue(claims.Subject, req.CharacterID, srv.ServerID, srv.WorldID, srv.BuildID)
 	if err != nil {
-		serverError(w, "issue ticket", err)
+		serverError(ctx, w, "issue ticket", err)
 		return
 	}
-	if err := s.Store.InsertJoinTicket(r.Context(), store.JoinTicket{
+	if err := s.Store.InsertJoinTicket(ctx, store.JoinTicket{
 		TicketID:    tc.GetTicketId(),
 		AccountID:   tc.GetAccountId(),
 		CharacterID: tc.GetCharacterId(),
@@ -213,9 +269,12 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		IssuedAt:    time.UnixMilli(tc.GetIssuedAtUnixMs()),
 		ExpiresAt:   time.UnixMilli(tc.GetExpiresAtUnixMs()),
 	}); err != nil {
-		serverError(w, "persist ticket", err)
+		serverError(ctx, w, "persist ticket", err)
 		return
 	}
+	// Ticket 発行は監査対象（MVP-SEC-009）。tok（署名済みチケット本体）は出さない。
+	obs.L(ctx).Info("join ticket issued",
+		"audit", true, "ticket_id", tc.GetTicketId(), "build_id", srv.BuildID)
 	writeJSON(w, http.StatusOK, joinResp{
 		ServerEndpoint: srv.Endpoint,
 		JoinTicket:     tok,
@@ -224,6 +283,28 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ----------------------------------------------------------------
+
+// loginFailed はログイン失敗を metrics と監査ログへ残す（第16章 Auth 失敗の
+// Rate Limit / MVP-SEC-009）。email も入力パスワードも出さない（MVP-SEC-002）。
+func loginFailed(ctx context.Context) {
+	metrics.LoginAttempts.WithLabelValues("invalid_credentials").Inc()
+	obs.L(ctx).Warn("login failed", "audit", true, "reason", "invalid_credentials")
+}
+
+// clientIP は Rate Limit のキーに使う送信元アドレスを返す。
+//
+// X-Forwarded-For は **意図的に見ない**。信頼できる Reverse Proxy が前段に
+// いる保証が無い状態でこのヘッダを信じると、攻撃者が値を詐称するだけで
+// キーを無限に変えられ、Rate Limit が素通りする。前段に Proxy を置く構成に
+// する際は、Proxy の実アドレスを許可リスト化した上でここを変更すること。
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// ポートが付いていない形式なら、そのまま使う。
+		return r.RemoteAddr
+	}
+	return host
+}
 
 // authenticate validates the Bearer access token and returns its claims.
 func (s *Server) authenticate(w http.ResponseWriter, r *http.Request) (*token.AccessClaims, bool) {
@@ -251,11 +332,7 @@ func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(body); err != nil {
-		log.Printf("rest: encode response: %v", err)
-	}
+	obs.WriteJSON(w, status, body)
 }
 
 type errorEnvelope struct {
@@ -271,8 +348,10 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, errorEnvelope{errorBody{Code: code, Message: message}})
 }
 
-func serverError(w http.ResponseWriter, what string, err error) {
-	log.Printf("rest: %s: %v", what, err)
+// serverError は内部エラーをログへ残し、Client には詳細を返さない。
+// err の中身（DSN や SQL 断片）を応答に載せないのが要点（MVP-SEC-002）。
+func serverError(ctx context.Context, w http.ResponseWriter, what string, err error) {
+	obs.L(ctx).Error("request failed", "op", what, "error", err.Error())
 	writeError(w, http.StatusInternalServerError, "internal", "internal server error")
 }
 

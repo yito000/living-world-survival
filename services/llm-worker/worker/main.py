@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
@@ -33,6 +34,16 @@ from worker.decision import (
 )
 from worker.event_director import EventDirector
 from worker.llm import LLMClient, LLMError, use_mock
+from worker.obs import (
+    DECISION_SECONDS,
+    DECISIONS,
+    ERRORS,
+    UP,
+    classify_error,
+    observe_usage,
+    render_metrics,
+    setup_logging,
+)
 from worker.schemas import AllowedIdError
 
 try:  # pragma: no cover - import guard
@@ -45,7 +56,7 @@ try:  # pragma: no cover - import guard
 except Exception:  # pragma: no cover
     asyncpg = None  # type: ignore[assignment]
 
-logging.basicConfig(level=logging.INFO)
+setup_logging("llm-worker")
 logger = logging.getLogger("llm-worker")
 
 DECISION_REQUEST_SUBJECT = "ai.decision.request"
@@ -55,7 +66,9 @@ DECISION_REQUEST_SUBJECT = "ai.decision.request"
 __all__ = [
     "DECISION_REQUEST_SUBJECT",
     "FALLBACK_TEMPLATE",
+    "READINESS",
     "DecisionWorker",
+    "Readiness",
     "build_mock_decision",
     "decision_id_of",
     "main",
@@ -71,6 +84,9 @@ async def record_decision(pool: Any, decision: dict[str, Any], status: str) -> N
     worldstate が先に requested を入れていれば単一行を遷移、無ければ挿入する（decision_id で
     冪等）。status ∈ {produced, mock, rejected}。失敗は握って DS の成立を妨げない。
     """
+    # metrics は Postgres の有無に依らず数える（記録は best-effort だが、判断そのものは
+    # 起きているため）。status は上の有限集合のみでラベル爆発しない。
+    DECISIONS.labels(status=status).inc()
     if pool is None:
         return
     try:
@@ -96,7 +112,11 @@ async def record_decision(pool: Any, decision: dict[str, Any], status: str) -> N
             json.dumps(decision),
         )
     except Exception:  # pragma: no cover - infra dependent
-        logger.warning("llm-worker: could not record %s decision", status, exc_info=True)
+        logger.warning(
+            "could not record decision",
+            extra={"status": status, "actor_id": decision.get("actor_id")},
+            exc_info=True,
+        )
 
 
 async def _record_produced(pool: Any, decision: dict[str, Any]) -> None:
@@ -124,7 +144,7 @@ class DecisionWorker:
             await self.on_request(msg.data)
 
         self._sub = await self._nc.subscribe(DECISION_REQUEST_SUBJECT, cb=_cb)
-        logger.info("llm-worker: subscribed %s (mock=%s)", DECISION_REQUEST_SUBJECT, self._mock)
+        logger.info("subscribed", extra={"subject": DECISION_REQUEST_SUBJECT, "mock": self._mock})
 
     async def stop(self) -> None:
         if self._sub is not None:
@@ -169,24 +189,44 @@ class DecisionWorker:
                 projection = await self._repo.load_projection(actor_id)
             except Exception:  # pragma: no cover - infra dependent
                 logger.warning(
-                    "llm-worker: projection lookup failed for %s", actor_id, exc_info=True
+                    "projection lookup failed", extra={"actor_id": actor_id}, exc_info=True
                 )
 
+        # 3.1 の「通常 30 秒以内 / Hard timeout 60 秒」を観測する区間。例外時も計測して
+        # 「遅くて落ちた」のか「即座に拒否された」のかを区別できるようにする。
+        started = time.perf_counter()
         try:
             output = await self._client.decide(candidates, state_summary(projection, reason))
         except LLMError as exc:
             # タイムアウト/拒否: **結果を発行しない**（AT-014）。DS は現行行動継続 →
             # Utility Fallback。履歴に rejected を残して観測可能にする。
-            logger.warning("llm-worker: decision skipped for %s: %s", actor_id, exc)
+            DECISION_SECONDS.observe(time.perf_counter() - started)
+            reason_label = classify_error(exc)
+            ERRORS.labels(reason=reason_label).inc()
+            logger.warning(
+                "decision skipped",
+                extra={"actor_id": actor_id, "reason": reason_label},
+                exc_info=True,
+            )
             await self._record_rejected(request, str(exc))
             return None
+        DECISION_SECONDS.observe(time.perf_counter() - started)
+        observe_usage(getattr(self._client, "last_usage", {}) or {})
 
         version = self._repo.template_version(output.template_id) if self._repo else None
         try:
             return build_decision(request, output, candidates, template_version=version)
         except AllowedIdError as exc:
             # 許可外 template_id / action_template_id は破棄する（17章 MVP-SEC-008）。
-            logger.warning("llm-worker: decision rejected for %s: %s", actor_id, exc)
+            ERRORS.labels(reason=classify_error(exc)).inc()
+            logger.warning(
+                "decision rejected",
+                extra={
+                    "actor_id": actor_id,
+                    "template_id": output.template_id,
+                    "reason": "allowed_id",
+                },
+            )
             await self._record_rejected(request, str(exc))
             return None
 
@@ -219,16 +259,67 @@ async def _build_pool() -> Any | None:
     try:
         return await asyncpg.create_pool(dsn=url, min_size=1, max_size=4)
     except Exception:  # pragma: no cover - infra dependent
-        logger.warning("llm-worker: could not connect Postgres (record disabled)")
+        # Postgres は best-effort。落ちていても ready のまま（/readyz は NATS のみを見る）。
+        logger.warning("could not connect Postgres (record disabled)")
         return None
 
 
+class Readiness:
+    """/readyz が見る依存の状態（10B 3.5）。
+
+    HTTP ハンドラは asyncio ループとは**別スレッド**で動くので、ここで持つ参照は lock 越しに
+    受け渡す。ハンドラからコルーチンを呼んではならない（ループを跨げない）ので、判定は
+    ``nc.is_connected`` のような同期的に読める属性だけで行う。
+
+    Postgres は含めない: ``record_decision`` は best-effort であり（3.2）、DB が落ちても
+    判断の発行と DS の fallback は成立する。ここで un-ready にすると本来動けるワーカーが
+    トラフィックから外れてしまう。
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._nc: Any = None
+
+    def set_nats(self, nc: Any) -> None:
+        with self._lock:
+            self._nc = nc
+
+    def nats_connected(self) -> bool:
+        with self._lock:
+            nc = self._nc
+        # 未接続（起動途中）と切断中（再接続待ち）を同じ「not ready」として扱う。
+        return nc is not None and bool(getattr(nc, "is_connected", False))
+
+
+READINESS = Readiness()
+
+
 class _HealthHandler(BaseHTTPRequestHandler):
+    def _send_json(self, code: int, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
-        if self.path in ("/healthz", "/readyz"):
-            body = json.dumps({"status": "ok", "service": "llm-worker"}).encode()
+        if self.path == "/healthz":
+            # Liveness: プロセスが生きていれば 200。依存は見ない（NATS が瞬断しただけで
+            # 再起動されると再接続の機会そのものを奪う）。
+            self._send_json(200, {"status": "ok", "service": "llm-worker"})
+        elif self.path == "/readyz":
+            # Readiness: 仕事の全ては NATS の購読なので、切れていれば ready ではない。
+            ready = READINESS.nats_connected()
+            UP.set(1 if ready else 0)
+            if ready:
+                self._send_json(200, {"status": "ok", "service": "llm-worker"})
+            else:
+                self._send_json(503, {"status": "unavailable", "dependency": "nats"})
+        elif self.path == "/metrics":
+            body, content_type = render_metrics()
             self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -254,7 +345,7 @@ def _build_client(mock: bool) -> Any | None:
     try:
         return LLMClient()
     except LLMError:
-        logger.warning("llm-worker: LLM クライアントを作れないためモックへフォールバックします")
+        logger.warning("LLM クライアントを作れないためモックへフォールバックします")
         return None
 
 
@@ -275,27 +366,28 @@ async def run() -> None:
         try:
             # テンプレ集合は起動時スナップショット（R7: コールバックで DB を舐めない）。
             loaded = await repo.load_templates()
-            logger.info("llm-worker: loaded %d active templates", len(loaded))
+            logger.info("loaded active templates", extra={"templates": len(loaded)})
         except Exception:  # pragma: no cover - infra dependent
-            logger.warning(
-                "llm-worker: could not load templates; candidates limited", exc_info=True
-            )
+            logger.warning("could not load templates; candidates limited", exc_info=True)
 
     mock = use_mock()
     client = _build_client(mock)
     if client is None:
         mock = True
     logger.info(
-        "llm-worker: mode=%s model=%s", "mock" if mock else "live", getattr(client, "model", "-")
+        "llm mode selected",
+        extra={"mode": "mock" if mock else "live", "model": getattr(client, "model", "-")},
     )
 
     nc = await nats.connect(url, max_reconnect_attempts=-1, reconnect_time_wait=2)
+    # ここから /readyz が NATS の実状態（再接続中は False）を見る。
+    READINESS.set_nats(nc)
 
     decisions = DecisionWorker(nc, pool, repo, client, mock)
     await decisions.start()
     director = EventDirector(nc, repo, client, mock)
     await director.start()
-    logger.info("llm-worker: ready at %s", url)
+    logger.info("ready", extra={"nats_url": url})
 
     stop = asyncio.Event()
     try:

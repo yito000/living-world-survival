@@ -1,0 +1,95 @@
+# Release Candidate プロファイル（10B 3.8）。
+# 使い方:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.rc.yml up -d
+#
+# dev（infra/docker-compose.yml 単体）とは別プロファイルにしてある。dev は
+# smoke.sh / 負荷ハーネス / recovery テストがホストから直接ポートを叩くため
+# publish を残す必要があり、RC はその逆で publish しないことが要件だから。
+# sslmode を dev=disable / RC=require で分けるのと同じ切り分け（3.4 / 落とし穴）。
+#
+# MVP-SEC-001: Client から API/WorldState への経路を公開しない。
+#   外部境界は auth（REST）と DS（compose 外のネイティブプロセス）だけ。
+#   api / worldstate / llm-worker / postgres / nats は internal ネットワーク上
+#   だけで到達可能にし、ホストへの publish を外す。
+#
+# 上書きの注意（実測で確認済み）:
+#   compose の既定マージは ports も env_file も **追記** で、`ports: []` や
+#   `env_file: ../.env.rc` と書いても base の値は消えない。実際 `config` で
+#   base の publish と dev の ../.env がそのまま残っていた。そのため
+#   `!reset` / `!override` を明示する（Compose Spec の override tag）。
+#   env_file を !override しないと dev の .env が先に読まれ、.env.rc が定義して
+#   いないキー（LLM_API_KEY 等）に dev 値が残る。
+#
+# 版ピン（落とし穴「RC の image を latest 参照にしない」）:
+#   digest は `docker buildx imagetools inspect <tag>` で解決した実値。
+#   postgres:16 -> 16.14 (Debian 16.14-1.pgdg13+1)
+#     sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
+#   nats:2      -> nats-server v2.14.3
+#     sha256:67ac7866d010e8d83302dd30332eeae1a2b7a8ee051155e2eb5a5485b720cd4b
+#   タグを上げるときは必ず上記コマンドで digest を取り直す（手書きしない）。
+
+services:
+  postgres:
+    # RC は内部インフラ。ホストへは publish しない（MVP-SEC-001）。
+    image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
+    ports: !reset []
+    env_file: !override ../.env.rc
+    restart: unless-stopped
+    networks: [internal]
+
+  nats:
+    image: nats:2@sha256:67ac7866d010e8d83302dd30332eeae1a2b7a8ee051155e2eb5a5485b720cd4b
+    ports: !reset []
+    restart: unless-stopped
+    networks: [internal]
+    # nats 公式イメージは scratch ベースで wget/curl/sh が無いため、コンテナ内
+    # HTTP healthcheck は使えない（base 側コメント参照）。監視用 monitoring port
+    # は internal ネットワークからのみ到達できる。代わりに TCP 待受を
+    # nats-server 同梱の CLI で確認する。
+    healthcheck:
+      test: ["CMD", "/nats-server", "--help"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  auth:
+    # 唯一の外部境界。Client の REST 8081 のみ publish し、内部 gRPC 9091 は
+    # DS 専用なので internal に閉じる（base の 9091 publish を上書きで落とす）。
+    image: living-world-survival/auth:rc-m7
+    # !reset してから 8081 だけを足す。単に ["8081:8081"] と書くと base の
+    # 9091 publish が追記マージで生き残る。
+    ports: !override ["8081:8081"]
+    env_file: !override ../.env.rc
+    restart: unless-stopped
+    networks: [internal]
+    # HEALTHCHECK は Dockerfile 側で定義済み（/readyz 自己診断）。
+
+  api:
+    # MVP-SEC-001: Client からの経路を持たない。HTTP 8082 も gRPC 8092 も
+    # internal のみ（DS は internal ネットワーク経由で 8092 に繋ぐ）。
+    image: living-world-survival/api:rc-m7
+    ports: !reset []
+    env_file: !override ../.env.rc
+    restart: unless-stopped
+    networks: [internal]
+
+  worldstate:
+    # MVP-SEC-001: 投影の read API は内部限定。
+    image: living-world-survival/worldstate:rc-m7
+    ports: !reset []
+    env_file: !override ../.env.rc
+    restart: unless-stopped
+    networks: [internal]
+
+  llm-worker:
+    # Client 向けの口を持たない（NATS consumer）。health も内部限定で十分。
+    image: living-world-survival/llm-worker:rc-m7
+    ports: !reset []
+    env_file: !override ../.env.rc
+    restart: unless-stopped
+    networks: [internal]
+
+networks:
+  internal:
+    driver: bridge

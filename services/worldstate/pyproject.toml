@@ -8,6 +8,7 @@ dependencies = [
     "uvicorn[standard]>=0.30",
     "nats-py>=2.7",
     "asyncpg>=0.29",
+    "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]

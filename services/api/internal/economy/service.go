@@ -3,14 +3,15 @@ package economy
 import (
 	"context"
 	"errors"
-	"log"
 	"strings"
 	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"living-world-survival/services/api/internal/metrics"
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
@@ -64,7 +65,7 @@ func (s *Server) RegisterBuyer(ctx context.Context, req *survivalv1.RegisterBuye
 
 	generated, err := GenerateStock(table, req.GetSeed(), modifierBP, s.Catalog)
 	if err != nil {
-		log.Printf("economy: RegisterBuyer generate stock: %v", err)
+		obs.L(ctx).Error("register buyer: stock generation failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "stock generation failed")
 	}
 
@@ -89,7 +90,7 @@ func (s *Server) RegisterBuyer(ctx context.Context, req *survivalv1.RegisterBuye
 		Stock:            rows,
 	})
 	if err != nil {
-		log.Printf("economy: RegisterBuyer: %v", err)
+		obs.L(ctx).Error("register buyer failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "register buyer failed")
 	}
 
@@ -122,7 +123,8 @@ func (s *Server) DespawnBuyer(ctx context.Context, req *survivalv1.DespawnBuyerR
 		return &survivalv1.DespawnBuyerResponse{Status: survivalv1.ResultStatus_RESULT_STATUS_REJECTED}, nil
 	}
 	if err != nil {
-		log.Printf("economy: DespawnBuyer: %v", err)
+		obs.L(ctx).Error("despawn buyer failed",
+			"buyer_instance_id", req.GetBuyerInstanceId(), "error", err.Error())
 		return nil, status.Error(codes.Internal, "despawn buyer failed")
 	}
 	return &survivalv1.DespawnBuyerResponse{Status: survivalv1.ResultStatus_RESULT_STATUS_OK}, nil
@@ -152,6 +154,8 @@ func (s *Server) CommitPurchase(ctx context.Context, req *survivalv1.CommitPurch
 		return nil, status.Error(codes.InvalidArgument, "stock_entry_id and purchaser_id are required")
 	}
 
+	ctx = obs.WithFields(ctx, obs.Fields{ActorID: req.GetPurchaserId()})
+
 	res, err := s.Store.CommitPurchase(ctx, store.PurchaseInput{
 		IdempotencyKey:   req.GetIdempotencyKey(),
 		BuyerInstanceID:  req.GetBuyerInstanceId(),
@@ -160,9 +164,23 @@ func (s *Server) CommitPurchase(ctx context.Context, req *survivalv1.CommitPurch
 		InventoryVersion: req.GetInventoryVersion(),
 	})
 	if err != nil {
-		log.Printf("economy: CommitPurchase: %v", err)
+		metrics.Purchases.WithLabelValues("error").Inc()
+		obs.L(ctx).Error("commit purchase failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "commit purchase failed")
 	}
+
+	metrics.Purchases.WithLabelValues(purchaseResultLabel(res.Outcome)).Inc()
+	if res.Outcome == store.PurchaseOutOfStock {
+		metrics.BuyerSoldOut.Inc()
+	}
+	// 購入は監査対象（MVP-SEC-009）。金額と確定後 version を残す。
+	obs.L(ctx).Info("purchase committed",
+		"audit", true,
+		"outcome", purchaseResultLabel(res.Outcome),
+		"idempotency_key", req.GetIdempotencyKey(),
+		"buyer_instance_id", req.GetBuyerInstanceId(),
+		"charged", res.Charged,
+		"new_inventory_version", res.NewInventoryVersion)
 
 	granted := make([]*survivalv1.ItemRef, 0, len(res.GrantedDefinitionIDs))
 	for i, defID := range res.GrantedDefinitionIDs {
@@ -179,6 +197,23 @@ func (s *Server) CommitPurchase(ctx context.Context, req *survivalv1.CommitPurch
 		NewPersistedInventoryVersion: res.NewInventoryVersion,
 		Charged:                      &survivalv1.Money{Amount: res.Charged},
 	}, nil
+}
+
+// purchaseResultLabel は Outcome を metrics/監査ログ用の安定した文字列にする。
+// proto の enum 名をそのまま使うと、proto 変更で系列名が黙って変わる。
+func purchaseResultLabel(o store.PurchaseOutcome) string {
+	switch o {
+	case store.PurchaseCommitted:
+		return "committed"
+	case store.PurchaseDuplicate:
+		return "duplicate"
+	case store.PurchaseOutOfStock:
+		return "out_of_stock"
+	case store.PurchaseInsufficientFunds:
+		return "insufficient_funds"
+	default:
+		return "rejected"
+	}
 }
 
 func purchaseStatusOf(o store.PurchaseOutcome) survivalv1.PurchaseStatus {
@@ -219,6 +254,8 @@ func (s *Server) CommitSale(ctx context.Context, req *survivalv1.CommitSaleReque
 		})
 	}
 
+	ctx = obs.WithFields(ctx, obs.Fields{ActorID: req.GetSellerId()})
+
 	res, err := s.Store.CommitSale(ctx, store.SaleInput{
 		IdempotencyKey:  req.GetIdempotencyKey(),
 		BuyerInstanceID: req.GetBuyerInstanceId(),
@@ -226,14 +263,40 @@ func (s *Server) CommitSale(ctx context.Context, req *survivalv1.CommitSaleReque
 		Items:           items,
 	})
 	if err != nil {
-		log.Printf("economy: CommitSale: %v", err)
+		metrics.Sales.WithLabelValues("error").Inc()
+		obs.L(ctx).Error("commit sale failed", "error", err.Error())
 		return nil, status.Error(codes.Internal, "commit sale failed")
 	}
+
+	metrics.Sales.WithLabelValues(saleResultLabel(res.Outcome)).Inc()
+	// 売却も通貨が動くので監査対象（MVP-SEC-009）。
+	obs.L(ctx).Info("sale committed",
+		"audit", true,
+		"outcome", saleResultLabel(res.Outcome),
+		"idempotency_key", req.GetIdempotencyKey(),
+		"buyer_instance_id", req.GetBuyerInstanceId(),
+		"proceeds", res.Proceeds,
+		"new_inventory_version", res.NewInventoryVersion)
+
 	return &survivalv1.CommitSaleResponse{
 		Status:                       saleStatusOf(res.Outcome),
 		Proceeds:                     &survivalv1.Money{Amount: res.Proceeds},
 		NewPersistedInventoryVersion: res.NewInventoryVersion,
 	}, nil
+}
+
+// saleResultLabel は Outcome を metrics/監査ログ用の安定した文字列にする。
+// store.SaleOutcome は string 型だが、そのまま label に流すと未知の値で
+// 時系列が増えるので、既知の値だけを通す。
+func saleResultLabel(o store.SaleOutcome) string {
+	switch o {
+	case store.SaleOK:
+		return "ok"
+	case store.SaleDuplicate:
+		return "duplicate"
+	default:
+		return "rejected"
+	}
 }
 
 func saleStatusOf(o store.SaleOutcome) survivalv1.ResultStatus {

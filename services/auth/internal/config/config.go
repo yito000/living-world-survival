@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +33,16 @@ type Config struct {
 	// Optional shared secret for internal gRPC (future service credentials,
 	// BSD第11章). Empty means no gRPC auth is enforced (M1 internal-only net).
 	GRPCSharedSecret string
+
+	// Rate Limit（第16章 Auth 失敗の Rate Limit / 10B 3.4）。閾値は Config Default。
+	// LoginRate はログイン **失敗** を数える上限で、成功は消費しない。
+	LoginRate       int
+	LoginRateWindow time.Duration
+	LoginRateBurst  int
+
+	// AccountCreateRate は 1 送信元あたりのアカウント作成上限（総当り登録の抑止）。
+	AccountCreateRate   int
+	AccountCreateWindow time.Duration
 }
 
 // Load reads the environment and returns a validated Config. It returns an
@@ -45,13 +56,34 @@ func Load() (*Config, error) {
 		GRPCSharedSecret: strings.TrimSpace(os.Getenv("AUTH_GRPC_SHARED_SECRET")),
 	}
 
+	// Rate Limit（第16章 / 10B 3.4）。閾値は Config Default で、誤設定は
+	// 起動時に落とす（実行時に黙って全開/全閉になる方が危ない）。
+	//
+	// 既定は「同一送信元から 1 分に 10 回まで失敗できる」。総当りには十分厳しく、
+	// パスワードを打ち間違える人間には十分緩い。0 を明示すると無効化。
+	var err error
+	if c.LoginRate, err = intOr("LOGIN_RATE_LIMIT", 10); err != nil {
+		return nil, err
+	}
+	if c.LoginRateWindow, err = durationOr("LOGIN_RATE_WINDOW", time.Minute); err != nil {
+		return nil, err
+	}
+	if c.LoginRateBurst, err = intOr("LOGIN_RATE_BURST", 10); err != nil {
+		return nil, err
+	}
+	if c.AccountCreateRate, err = intOr("ACCOUNT_CREATE_RATE_LIMIT", 5); err != nil {
+		return nil, err
+	}
+	if c.AccountCreateWindow, err = durationOr("ACCOUNT_CREATE_RATE_WINDOW", time.Minute); err != nil {
+		return nil, err
+	}
+
 	key := strings.TrimSpace(os.Getenv("JWT_SIGNING_KEY"))
 	if key == "" {
 		return nil, fmt.Errorf("config: JWT_SIGNING_KEY is required")
 	}
 	c.JWTSigningKey = []byte(key)
 
-	var err error
 	if c.AccessTokenTTL, err = durationOr("ACCESS_TOKEN_TTL", 15*time.Minute); err != nil {
 		return nil, err
 	}
@@ -121,4 +153,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// intOr は非負整数の設定値を読む。負値は誤設定として拒否する（0 は「無効化」の意）。
+func intOr(name string, fallback int) (int, error) {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return fallback, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s invalid integer %q: %w", name, v, err)
+	}
+	if n < 0 {
+		return 0, fmt.Errorf("config: %s must be >= 0, got %d", name, n)
+	}
+	return n, nil
 }

@@ -1,0 +1,37 @@
+# Go サービス（api/auth）のビルドコンテキストはリポジトリ直下（compose の
+# context: ..）なので、既定では unity/ や build/ まで daemon へ送られる。
+# Dockerfile が COPY するのは services/{gen/go,common,api,auth} だけなので、
+# 無関係な巨大ディレクトリは最初から送らない。
+
+# --- Docker ビルドに不要な大物 ---
+.git/
+unity/
+build/
+docs/
+production/
+assets-pipeline/
+proto/
+scripts/
+
+# --- 秘密情報（イメージへ焼き込まない, MVP-SEC-007） ---
+.env
+.env.rc
+*.env.local
+
+# --- Go/Python の中間生成物 ---
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+**/*.egg-info/
+**/coverage.out
+**/coverage.html
+**/*.test
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

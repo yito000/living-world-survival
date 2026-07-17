@@ -10,11 +10,11 @@ package ranking
 import (
 	"context"
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 )
 
 // DefaultInterval is how often the batch runs unattended (09B 3.9: 1時間ごと).
@@ -89,10 +89,11 @@ func (b *Batch) RunPeriodically(ctx context.Context, interval time.Duration) {
 			res, err := b.Run(ctx)
 			if err != nil {
 				// A failed run is not fatal: the next tick retries.
-				log.Printf("ranking: run failed: %v", err)
+				obs.L(ctx).Warn("ranking run failed", "error", err.Error())
 				continue
 			}
-			log.Printf("ranking: run complete (price_version=%d owners=%d)", res.PriceVersion, res.OwnerCount)
+			obs.L(ctx).Info("ranking run complete",
+				"price_version", res.PriceVersion, "owners", res.OwnerCount)
 		}
 	}
 }

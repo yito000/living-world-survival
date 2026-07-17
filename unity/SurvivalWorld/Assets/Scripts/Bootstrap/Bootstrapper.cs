@@ -62,10 +62,7 @@ namespace SurvivalWorld.Bootstrap
             string characterId = !string.IsNullOrWhiteSpace(runtimeCharacterIdOverride)
                 ? runtimeCharacterIdOverride
                 : IsDevLocalModeActive() ? config.DevCharacterId : defaultCharacterId;
-            MatchmakingJoinResponse match = await authClient.JoinMatchmakingAsync(characterId, config.BuildId, cancellationToken);
-            string clientEndpoint = ResolveClientEndpoint(match.server_endpoint);
-            Debug.Log($"Matchmaking joined: serverEndpoint={match.server_endpoint}, clientEndpoint={clientEndpoint}");
-            await sessionClient.ConnectWithJoinTicketAsync(clientEndpoint, match.join_ticket, cancellationToken);
+            await JoinAndConnectWithFreshTicketAsync(characterId, cancellationToken);
         }
 
         private async UniTask CreateAccountLoginJoinAndConnectAsync(string email, string password, string displayName, CancellationToken cancellationToken)
@@ -98,6 +95,41 @@ namespace SurvivalWorld.Bootstrap
             return matchmakingEndpoint;
         }
 
+        private async UniTask JoinAndConnectWithFreshTicketAsync(string characterId, CancellationToken cancellationToken)
+        {
+            var joinFlow = new MatchmakingJoinFlow(authClient);
+            Exception retryableFailure = null;
+            const int maxAttempts = 2;
+
+            for (int attempt = 0; attempt < maxAttempts; attempt++)
+            {
+                MatchmakingJoinResponse match = await joinFlow.JoinWithRefreshAsync(characterId, config.BuildId, cancellationToken);
+                string clientEndpoint = ResolveClientEndpoint(match.server_endpoint);
+                Debug.Log($"Matchmaking joined: serverEndpoint={match.server_endpoint}, clientEndpoint={clientEndpoint}");
+
+                try
+                {
+                    await sessionClient.ConnectWithJoinTicketAsync(clientEndpoint, match.join_ticket, cancellationToken);
+                    return;
+                }
+                catch (Exception ex) when (attempt + 1 < maxAttempts && IsRetryableJoinTicketConnectFailure(ex))
+                {
+                    retryableFailure = ex;
+                    Debug.LogWarning("FishNet authentication failed before completion; requesting a fresh join ticket and retrying once.");
+                }
+            }
+
+            if (retryableFailure != null)
+            {
+                throw retryableFailure;
+            }
+        }
+
+        private static bool IsRetryableJoinTicketConnectFailure(Exception ex)
+        {
+            return ex is InvalidOperationException &&
+                   ex.Message.IndexOf("disconnected before authentication", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
         private IAuthClient CreateAuthClient()
         {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD

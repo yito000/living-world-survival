@@ -5,10 +5,11 @@ package grpc
 import (
 	"context"
 	"errors"
-	"log"
 
+	"living-world-survival/services/auth/internal/metrics"
 	"living-world-survival/services/auth/internal/store"
 	"living-world-survival/services/auth/internal/ticket"
+	"living-world-survival/services/common/obs"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
 )
 
@@ -23,17 +24,30 @@ type Server struct {
 // server, then atomically consumes it (single-use). Failures return
 // ok=false with an error string rather than a gRPC error (G1, 3.4).
 func (s *Server) RedeemJoinTicket(ctx context.Context, req *survivalv1.RedeemJoinTicketRequest) (*survivalv1.RedeemJoinTicketResponse, error) {
+	ctx = obs.WithFields(ctx, obs.Fields{ServerID: req.GetServerId()})
+
 	claims, err := s.Tickets.Verify(req.GetTicket())
 	if err != nil {
-		return redeemErr("invalid_signature"), nil
+		// 署名不正はチケット本体を出さない（MVP-SEC-002）。
+		return s.redeemRejected(ctx, "invalid_signature"), nil
 	}
+	ctx = obs.WithFields(ctx, obs.Fields{
+		AccountID: claims.GetAccountId(), WorldID: claims.GetWorldId(),
+	})
 	if claims.GetServerId() != req.GetServerId() {
-		return redeemErr("server_mismatch"), nil
+		return s.redeemRejected(ctx, "server_mismatch"), nil
 	}
 	consumed, err := s.Store.RedeemJoinTicket(ctx, claims.GetTicketId(), req.GetServerId())
 	if err != nil {
-		return redeemErr(redeemReason(err)), nil
+		return s.redeemRejected(ctx, s.redeemReason(ctx, err)), nil
 	}
+
+	// Ticket 消費は監査対象（MVP-SEC-009）。
+	metrics.JoinTicketRedeems.WithLabelValues("ok").Inc()
+	obs.L(ctx).Info("join ticket redeemed",
+		"audit", true, "ticket_id", consumed.TicketID,
+		"character_id", consumed.CharacterID, "build_id", consumed.BuildID)
+
 	// Return the DB-persisted claims (authoritative for audit).
 	return &survivalv1.RedeemJoinTicketResponse{
 		Ok: true,
@@ -53,6 +67,9 @@ func (s *Server) RedeemJoinTicket(ctx context.Context, req *survivalv1.RedeemJoi
 
 // RegisterServer upserts a Dedicated Server (ready=false until Heartbeat) (G2).
 func (s *Server) RegisterServer(ctx context.Context, req *survivalv1.RegisterServerRequest) (*survivalv1.RegisterServerResponse, error) {
+	ctx = obs.WithFields(ctx, obs.Fields{
+		ServerID: req.GetServerId(), WorldID: req.GetWorldId(),
+	})
 	err := s.Store.UpsertServer(ctx, store.GameServer{
 		ServerID: req.GetServerId(),
 		WorldID:  req.GetWorldId(),
@@ -61,37 +78,67 @@ func (s *Server) RegisterServer(ctx context.Context, req *survivalv1.RegisterSer
 		Capacity: req.GetCapacity(),
 	})
 	if err != nil {
-		log.Printf("grpc: RegisterServer: %v", err)
+		obs.L(ctx).Error("register server failed", "error", err.Error())
 		return &survivalv1.RegisterServerResponse{Ok: false}, nil
 	}
+	obs.L(ctx).Info("server registered",
+		"build_id", req.GetBuildId(), "capacity", req.GetCapacity())
 	return &survivalv1.RegisterServerResponse{Ok: true}, nil
 }
 
-// Heartbeat refreshes liveness and the ready flag (G3).
+// Heartbeat refreshes liveness and the ready flag (G3), and records the DS
+// self-reported tick/player metrics（10B 3.1・3.5: Tick の出所は DS に統一）。
 func (s *Server) Heartbeat(ctx context.Context, req *survivalv1.HeartbeatRequest) (*survivalv1.HeartbeatResponse, error) {
-	found, err := s.Store.Heartbeat(ctx, req.GetServerId(), req.GetReady())
+	serverID := req.GetServerId()
+	ctx = obs.WithFields(ctx, obs.Fields{ServerID: serverID})
+
+	found, err := s.Store.Heartbeat(ctx, serverID, req.GetReady())
 	if err != nil {
-		log.Printf("grpc: Heartbeat: %v", err)
+		obs.L(ctx).Error("heartbeat failed", "error", err.Error())
 		return &survivalv1.HeartbeatResponse{Ok: false}, nil
 	}
-	return &survivalv1.HeartbeatResponse{Ok: found}, nil
+	if !found {
+		// 未登録 server の Heartbeat で系列を作ると、存在しない DS の
+		// tick/players がスクレイプ結果に混ざる。
+		return &survivalv1.HeartbeatResponse{Ok: false}, nil
+	}
+
+	metrics.DSHeartbeats.WithLabelValues(serverID).Inc()
+	metrics.ObserveTickMS(serverID, req.GetTickMs())
+	metrics.SetPlayers(serverID, req.GetPlayers())
+	metrics.SetReady(serverID, req.GetReady())
+
+	return &survivalv1.HeartbeatResponse{Ok: true}, nil
 }
 
 // MarkDraining takes the server out of matchmaking (G4).
 func (s *Server) MarkDraining(ctx context.Context, req *survivalv1.MarkDrainingRequest) (*survivalv1.MarkDrainingResponse, error) {
-	found, err := s.Store.MarkDraining(ctx, req.GetServerId())
+	serverID := req.GetServerId()
+	ctx = obs.WithFields(ctx, obs.Fields{ServerID: serverID})
+
+	found, err := s.Store.MarkDraining(ctx, serverID)
 	if err != nil {
-		log.Printf("grpc: MarkDraining: %v", err)
+		obs.L(ctx).Error("mark draining failed", "error", err.Error())
 		return &survivalv1.MarkDrainingResponse{Ok: false}, nil
+	}
+	if found {
+		// ドレイン後は Matchmaking 対象外。ready 系列を 0 に落としておかないと、
+		// 停止した DS が ready のまま残って見える。
+		metrics.SetReady(serverID, false)
+		obs.L(ctx).Info("server draining")
 	}
 	return &survivalv1.MarkDrainingResponse{Ok: found}, nil
 }
 
-func redeemErr(reason string) *survivalv1.RedeemJoinTicketResponse {
+// redeemRejected は拒否理由を metrics と監査ログへ残しつつ応答を組む
+// （MVP-SEC-004 の期限切れ/再利用/不一致拒否を観測可能にする）。
+func (s *Server) redeemRejected(ctx context.Context, reason string) *survivalv1.RedeemJoinTicketResponse {
+	metrics.JoinTicketRedeems.WithLabelValues(reason).Inc()
+	obs.L(ctx).Warn("join ticket rejected", "audit", true, "reason", reason)
 	return &survivalv1.RedeemJoinTicketResponse{Ok: false, Error: reason}
 }
 
-func redeemReason(err error) string {
+func (s *Server) redeemReason(ctx context.Context, err error) string {
 	switch {
 	case errors.Is(err, store.ErrTicketUsed):
 		return "already_used"
@@ -102,7 +149,7 @@ func redeemReason(err error) string {
 	case errors.Is(err, store.ErrTicketNotFound):
 		return "not_found"
 	default:
-		log.Printf("grpc: RedeemJoinTicket: %v", err)
+		obs.L(ctx).Error("redeem join ticket failed", "error", err.Error())
 		return "internal"
 	}
 }

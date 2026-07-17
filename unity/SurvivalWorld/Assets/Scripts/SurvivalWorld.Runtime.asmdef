@@ -1,21 +1,22 @@
 {
-    "name": "SurvivalWorld.Runtime",
-    "rootNamespace": "SurvivalWorld",
-    "references": [
-        "SurvivalWorld.Generated",
-        "FishNet.Runtime",
-        "Unity.InputSystem",
-        "UniTask",
-        "R3.Unity",
-        "VContainer"
-    ],
-    "includePlatforms": [],
-    "excludePlatforms": [],
-    "allowUnsafeCode": false,
-    "overrideReferences": false,
-    "precompiledReferences": [],
-    "autoReferenced": true,
-    "defineConstraints": [],
-    "versionDefines": [],
-    "noEngineReferences": false
+  "name": "SurvivalWorld.Runtime",
+  "rootNamespace": "SurvivalWorld",
+  "references": [
+    "SurvivalWorld.Generated",
+    "StarterAssets",
+    "FishNet.Runtime",
+    "Unity.InputSystem",
+    "UniTask",
+    "R3.Unity",
+    "VContainer"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
 }

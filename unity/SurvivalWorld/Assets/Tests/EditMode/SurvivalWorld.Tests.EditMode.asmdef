@@ -1,29 +1,30 @@
 {
-    "name": "SurvivalWorld.Tests.EditMode",
-    "rootNamespace": "SurvivalWorld.Tests",
-    "references": [
-        "SurvivalWorld.Runtime",
-        "SurvivalWorld.Generated",
-        "Google.Protobuf",
-        "Unity.InputSystem",
-        "FishNet.Runtime",
-        "UniTask"
-    ],
-    "includePlatforms": [
-        "Editor"
-    ],
-    "excludePlatforms": [],
-    "allowUnsafeCode": false,
-    "overrideReferences": true,
-    "precompiledReferences": [
-        "Google.Protobuf.dll"
-    ],
-    "autoReferenced": false,
-    "defineConstraints": [],
-    "versionDefines": [],
-    "optionalUnityReferences": [
-        "TestAssemblies"
-    ],
-    "noEngineReferences": false
+  "name": "SurvivalWorld.Tests.EditMode",
+  "rootNamespace": "SurvivalWorld.Tests",
+  "references": [
+    "SurvivalWorld.Runtime",
+    "StarterAssets",
+    "SurvivalWorld.Editor",
+    "SurvivalWorld.Generated",
+    "Google.Protobuf",
+    "Unity.InputSystem",
+    "FishNet.Runtime",
+    "UniTask"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": true,
+  "precompiledReferences": [
+    "Google.Protobuf.dll"
+  ],
+  "autoReferenced": false,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "noEngineReferences": false
 }
-

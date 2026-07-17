@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using FishNet.Connection;
 using FishNet.Object;
+using StarterAssets;
 using Survival.V1;
 using UnityEngine;
 
@@ -11,17 +12,29 @@ namespace SurvivalWorld.Player
     public sealed class NetworkPlayerController : NetworkBehaviour
     {
         [SerializeField] private ThirdPersonInputReader inputReader;
-        [SerializeField] private float walkSpeed = 4.5f;
-        [SerializeField] private float sprintSpeed = 7f;
-        [SerializeField] private float jumpVelocity = 5f;
-        [SerializeField] private float gravity = -18f;
+        [SerializeField] private StarterAssetsInputs starterAssetsInputs;
+        [SerializeField] private Animator animator;
+        [SerializeField] private Transform cameraTarget;
+        [SerializeField] private float walkSpeed = 2f;
+        [SerializeField] private float sprintSpeed = 5.335f;
+        [SerializeField] private float jumpVelocity = 6f;
+        [SerializeField] private float gravity = -15f;
         [SerializeField] private float rotationSpeed = 18f;
+        [SerializeField] private float speedChangeRate = 10f;
+        [SerializeField] private float fallTimeout = 0.15f;
 
         private CharacterController characterController;
         private float verticalVelocity;
         private bool commandLineTestDrive;
         private Vector2 commandLineTestMove;
         private bool loggedServerMovement;
+        private float animationBlend;
+        private float fallTimeoutDelta;
+        private int animIDSpeed;
+        private int animIDGrounded;
+        private int animIDJump;
+        private int animIDFreeFall;
+        private int animIDMotionSpeed;
 
         private void Awake()
         {
@@ -31,6 +44,18 @@ namespace SurvivalWorld.Player
                 inputReader = GetComponent<ThirdPersonInputReader>();
             }
 
+            if (starterAssetsInputs == null)
+            {
+                starterAssetsInputs = GetComponent<StarterAssetsInputs>();
+            }
+
+            if (animator == null)
+            {
+                animator = GetComponentInChildren<Animator>(true);
+            }
+
+            AssignAnimationIDs();
+            fallTimeoutDelta = fallTimeout;
             ConfigureCommandLineTestDrive();
         }
 
@@ -86,11 +111,11 @@ namespace SurvivalWorld.Player
                 Debug.Log($"Server received movement input for {name}: sequence={sequence}, position={transform.position}.");
             }
 
-            ApplyAuthoritativeStateObserversRpc(transform.position, transform.rotation);
+            ApplyAuthoritativeStateObserversRpc(transform.position, transform.rotation, animationBlend, LastMotionSpeed, LastGrounded, LastJump, LastFreeFall);
         }
 
         [ObserversRpc(BufferLast = true)]
-        private void ApplyAuthoritativeStateObserversRpc(Vector3 position, Quaternion rotation)
+        private void ApplyAuthoritativeStateObserversRpc(Vector3 position, Quaternion rotation, float speed, float motionSpeed, bool grounded, bool jump, bool freeFall)
         {
             if (IsServerStarted)
             {
@@ -98,7 +123,13 @@ namespace SurvivalWorld.Player
             }
 
             transform.SetPositionAndRotation(position, rotation);
+            ApplyAnimatorState(speed, motionSpeed, grounded, jump, freeFall);
         }
+
+        private bool LastGrounded { get; set; } = true;
+        private bool LastJump { get; set; }
+        private bool LastFreeFall { get; set; }
+        private float LastMotionSpeed { get; set; }
 
         private void TryBindOwnerCamera()
         {
@@ -110,7 +141,7 @@ namespace SurvivalWorld.Player
             ThirdPersonCameraRig cameraRig = Camera.main.GetComponent<ThirdPersonCameraRig>();
             if (cameraRig != null)
             {
-                cameraRig.Target = transform;
+                cameraRig.Target = cameraTarget == null ? transform : cameraTarget;
             }
         }
 
@@ -167,17 +198,20 @@ namespace SurvivalWorld.Player
             bool grounded = characterController == null || characterController.isGrounded;
             if (grounded && verticalVelocity < 0f)
             {
-                verticalVelocity = -1f;
+                verticalVelocity = -2f;
             }
 
+            bool jumpTriggered = false;
             if (command.Jump && grounded)
             {
                 verticalVelocity = jumpVelocity;
+                jumpTriggered = true;
             }
 
             verticalVelocity += gravity * deltaTime;
-            float speed = command.Sprint ? sprintSpeed : walkSpeed;
-            Vector3 displacement = move * speed;
+            float inputMagnitude = Mathf.Clamp01(move.magnitude);
+            float targetSpeed = inputMagnitude <= 0.0001f ? 0f : command.Sprint ? sprintSpeed : walkSpeed;
+            Vector3 displacement = move * targetSpeed;
             displacement.y = verticalVelocity;
 
             if (characterController != null && characterController.enabled)
@@ -194,6 +228,70 @@ namespace SurvivalWorld.Player
                 Quaternion target = Quaternion.LookRotation(move, Vector3.up);
                 transform.rotation = Quaternion.Slerp(transform.rotation, target, 1f - Mathf.Exp(-rotationSpeed * deltaTime));
             }
+
+            bool freeFall = UpdateFallState(grounded, deltaTime);
+            UpdateAnimatorState(targetSpeed, inputMagnitude, grounded, jumpTriggered, freeFall, deltaTime);
+        }
+
+        private bool UpdateFallState(bool grounded, float deltaTime)
+        {
+            if (grounded)
+            {
+                fallTimeoutDelta = fallTimeout;
+                return false;
+            }
+
+            if (fallTimeoutDelta >= 0f)
+            {
+                fallTimeoutDelta -= deltaTime;
+                return false;
+            }
+
+            return true;
+        }
+
+        private void UpdateAnimatorState(float targetSpeed, float motionSpeed, bool grounded, bool jump, bool freeFall, float deltaTime)
+        {
+            animationBlend = Mathf.Lerp(animationBlend, targetSpeed, Mathf.Clamp01(deltaTime * speedChangeRate));
+            if (animationBlend < 0.01f)
+            {
+                animationBlend = 0f;
+            }
+
+            ApplyAnimatorState(animationBlend, motionSpeed, grounded, jump, freeFall);
+        }
+
+        private void ApplyAnimatorState(float speed, float motionSpeed, bool grounded, bool jump, bool freeFall)
+        {
+            LastGrounded = grounded;
+            LastJump = jump;
+            LastFreeFall = freeFall;
+            LastMotionSpeed = motionSpeed;
+
+            if (animator == null)
+            {
+                animator = GetComponentInChildren<Animator>(true);
+            }
+
+            if (animator == null)
+            {
+                return;
+            }
+
+            animator.SetFloat(animIDSpeed, speed);
+            animator.SetFloat(animIDMotionSpeed, motionSpeed);
+            animator.SetBool(animIDGrounded, grounded);
+            animator.SetBool(animIDJump, jump);
+            animator.SetBool(animIDFreeFall, freeFall);
+        }
+
+        private void AssignAnimationIDs()
+        {
+            animIDSpeed = Animator.StringToHash("Speed");
+            animIDGrounded = Animator.StringToHash("Grounded");
+            animIDJump = Animator.StringToHash("Jump");
+            animIDFreeFall = Animator.StringToHash("FreeFall");
+            animIDMotionSpeed = Animator.StringToHash("MotionSpeed");
         }
     }
 }

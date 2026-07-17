@@ -6,10 +6,11 @@ package outbox
 
 import (
 	"context"
-	"log"
 	"time"
 
+	"living-world-survival/services/api/internal/metrics"
 	"living-world-survival/services/api/internal/store"
+	"living-world-survival/services/common/obs"
 )
 
 // Publisher publishes a message to a subject. Implementations must return a
@@ -44,23 +45,22 @@ func (r *Relay) Run(ctx context.Context) {
 	ticker := time.NewTicker(r.Interval)
 	defer ticker.Stop()
 
-	if n, err := r.Drain(ctx); err != nil {
-		log.Printf("outbox: drain error: %v", err)
-	} else if n > 0 {
-		log.Printf("outbox: published %d message(s)", n)
-	}
-
+	r.drainOnce(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if n, err := r.Drain(ctx); err != nil {
-				log.Printf("outbox: drain error: %v", err)
-			} else if n > 0 {
-				log.Printf("outbox: published %d message(s)", n)
-			}
+			r.drainOnce(ctx)
 		}
+	}
+}
+
+func (r *Relay) drainOnce(ctx context.Context) {
+	if n, err := r.Drain(ctx); err != nil {
+		obs.L(ctx).Warn("outbox drain error", "error", err.Error())
+	} else if n > 0 {
+		obs.L(ctx).Info("outbox published", "count", n)
 	}
 }
 
@@ -75,18 +75,24 @@ func (r *Relay) Drain(ctx context.Context) (int, error) {
 	published := 0
 	for _, m := range msgs {
 		if err := r.Publisher.Publish(ctx, m.Topic, m.Payload); err != nil {
-			log.Printf("outbox: publish %s to %s failed: %v", m.MessageID, m.Topic, err)
+			metrics.OutboxPublished.WithLabelValues("publish_failed").Inc()
+			obs.L(ctx).Warn("outbox publish failed",
+				"message_id", m.MessageID, "topic", m.Topic, "error", err.Error())
 			if rerr := r.Store.IncrementRetry(ctx, m.MessageID); rerr != nil {
-				log.Printf("outbox: increment retry %s: %v", m.MessageID, rerr)
+				obs.L(ctx).Warn("outbox increment retry failed",
+					"message_id", m.MessageID, "error", rerr.Error())
 			}
 			continue
 		}
 		if err := r.Store.MarkPublished(ctx, m.MessageID); err != nil {
 			// Published to NATS but failed to record it: will be re-published
 			// (at-least-once). Consumers dedup via inbox_dedup.
-			log.Printf("outbox: mark published %s: %v", m.MessageID, err)
+			metrics.OutboxPublished.WithLabelValues("mark_failed").Inc()
+			obs.L(ctx).Warn("outbox mark published failed",
+				"message_id", m.MessageID, "error", err.Error())
 			continue
 		}
+		metrics.OutboxPublished.WithLabelValues("ok").Inc()
 		published++
 	}
 	return published, nil
