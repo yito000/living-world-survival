@@ -12,6 +12,10 @@ service EconomyService {
   rpc CommitPurchase(CommitPurchaseRequest) returns (CommitPurchaseResponse);
   // 売却を単一 Tx で確定。
   rpc CommitSale(CommitSaleRequest) returns (CommitSaleResponse);
+  // M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+  rpc RegisterBuyer(RegisterBuyerRequest) returns (RegisterBuyerResponse);
+  // M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+  rpc DespawnBuyer(DespawnBuyerRequest) returns (DespawnBuyerResponse);
 }
 
 enum PurchaseStatus {
@@ -50,4 +54,40 @@ message CommitSaleResponse {
   ResultStatus status = 1;
   Money proceeds = 2;
   int64 new_persisted_inventory_version = 3;
+}
+
+// Buyer 登録（DS=世界権威が起点、永続 Writer は API — 付録C）。
+message RegisterBuyerRequest {
+  string idempotency_key = 1; // (world_id, buyer 連番) から DS が決定的に生成
+  string world_id = 2;
+  string region_id = 3;
+  int64 seed = 4; // DS 採番。在庫生成を決定的にする
+  string inventory_table_id = 5; // 付録B.3 の table（例 rare_weapon_buyer_v1）
+  int32 price_modifier_bp = 6; // buyer_modifier をベーシスポイント整数で（10000=×1.0）
+  int64 spawn_at_unix_ms = 7;
+  int64 despawn_at_unix_ms = 8;
+}
+
+// 生成済み在庫1件。unit_price は在庫生成時に確定し、購入時は再計算しない（3.4）。
+message BuyerStockEntry {
+  string stock_entry_id = 1;
+  string item_definition_id = 2;
+  int64 unit_price = 3; // 整数（最小通貨単位）
+  int32 remaining_quantity = 4;
+  int64 version = 5;
+}
+
+message RegisterBuyerResponse {
+  string buyer_instance_id = 1;
+  repeated BuyerStockEntry stock = 2;
+}
+
+message DespawnBuyerRequest {
+  string buyer_instance_id = 1;
+  // PREPARING：新規購入拒否・開始済Txのみ完了 / DESPAWNED：締め
+  string target_status = 2;
+}
+
+message DespawnBuyerResponse {
+  ResultStatus status = 1;
 }

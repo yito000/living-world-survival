@@ -1,0 +1,13 @@
+{
+  "_comment": "Buyer Stock Definition（付録B.3 / 09B 3.5）。有限・重み付き抽選・レア保証なし。guaranteed_rare_slots=0 は仕様であり、抽選後にレアを補填してはならない（AT-011 / AT-017）。item_tag は data/item_definitions.json の tags と一致させること（09B の例は weapon.common / blueprint.rare だが、正本マスタに存在するタグへ対応付けた。weight 配分は例のまま）。",
+  "inventory_table_id": "rare_weapon_buyer_v1",
+  "slot_count_min": 4,
+  "slot_count_max": 8,
+  "entries": [
+    { "item_tag": "weapon.hunting.basic", "weight": 60 },
+    { "item_tag": "weapon.hunting", "weight": 25 },
+    { "item_tag": "weapon.rare", "weight": 8 },
+    { "item_tag": "asset.luxury.weapon", "weight": 2 }
+  ],
+  "guaranteed_rare_slots": 0
+}

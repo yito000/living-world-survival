@@ -359,6 +359,333 @@ func (x *CommitSaleResponse) GetNewPersistedInventoryVersion() int64 {
 	return 0
 }
 
+// Buyer 登録（DS=世界権威が起点、永続 Writer は API — 付録C）。
+type RegisterBuyerRequest struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	IdempotencyKey   string                 `protobuf:"bytes,1,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // (world_id, buyer 連番) から DS が決定的に生成
+	WorldId          string                 `protobuf:"bytes,2,opt,name=world_id,json=worldId,proto3" json:"world_id,omitempty"`
+	RegionId         string                 `protobuf:"bytes,3,opt,name=region_id,json=regionId,proto3" json:"region_id,omitempty"`
+	Seed             int64                  `protobuf:"varint,4,opt,name=seed,proto3" json:"seed,omitempty"`                                                  // DS 採番。在庫生成を決定的にする
+	InventoryTableId string                 `protobuf:"bytes,5,opt,name=inventory_table_id,json=inventoryTableId,proto3" json:"inventory_table_id,omitempty"` // 付録B.3 の table（例 rare_weapon_buyer_v1）
+	PriceModifierBp  int32                  `protobuf:"varint,6,opt,name=price_modifier_bp,json=priceModifierBp,proto3" json:"price_modifier_bp,omitempty"`   // buyer_modifier をベーシスポイント整数で（10000=×1.0）
+	SpawnAtUnixMs    int64                  `protobuf:"varint,7,opt,name=spawn_at_unix_ms,json=spawnAtUnixMs,proto3" json:"spawn_at_unix_ms,omitempty"`
+	DespawnAtUnixMs  int64                  `protobuf:"varint,8,opt,name=despawn_at_unix_ms,json=despawnAtUnixMs,proto3" json:"despawn_at_unix_ms,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *RegisterBuyerRequest) Reset() {
+	*x = RegisterBuyerRequest{}
+	mi := &file_survival_v1_economy_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterBuyerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterBuyerRequest) ProtoMessage() {}
+
+func (x *RegisterBuyerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_survival_v1_economy_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterBuyerRequest.ProtoReflect.Descriptor instead.
+func (*RegisterBuyerRequest) Descriptor() ([]byte, []int) {
+	return file_survival_v1_economy_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *RegisterBuyerRequest) GetIdempotencyKey() string {
+	if x != nil {
+		return x.IdempotencyKey
+	}
+	return ""
+}
+
+func (x *RegisterBuyerRequest) GetWorldId() string {
+	if x != nil {
+		return x.WorldId
+	}
+	return ""
+}
+
+func (x *RegisterBuyerRequest) GetRegionId() string {
+	if x != nil {
+		return x.RegionId
+	}
+	return ""
+}
+
+func (x *RegisterBuyerRequest) GetSeed() int64 {
+	if x != nil {
+		return x.Seed
+	}
+	return 0
+}
+
+func (x *RegisterBuyerRequest) GetInventoryTableId() string {
+	if x != nil {
+		return x.InventoryTableId
+	}
+	return ""
+}
+
+func (x *RegisterBuyerRequest) GetPriceModifierBp() int32 {
+	if x != nil {
+		return x.PriceModifierBp
+	}
+	return 0
+}
+
+func (x *RegisterBuyerRequest) GetSpawnAtUnixMs() int64 {
+	if x != nil {
+		return x.SpawnAtUnixMs
+	}
+	return 0
+}
+
+func (x *RegisterBuyerRequest) GetDespawnAtUnixMs() int64 {
+	if x != nil {
+		return x.DespawnAtUnixMs
+	}
+	return 0
+}
+
+// 生成済み在庫1件。unit_price は在庫生成時に確定し、購入時は再計算しない（3.4）。
+type BuyerStockEntry struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	StockEntryId      string                 `protobuf:"bytes,1,opt,name=stock_entry_id,json=stockEntryId,proto3" json:"stock_entry_id,omitempty"`
+	ItemDefinitionId  string                 `protobuf:"bytes,2,opt,name=item_definition_id,json=itemDefinitionId,proto3" json:"item_definition_id,omitempty"`
+	UnitPrice         int64                  `protobuf:"varint,3,opt,name=unit_price,json=unitPrice,proto3" json:"unit_price,omitempty"` // 整数（最小通貨単位）
+	RemainingQuantity int32                  `protobuf:"varint,4,opt,name=remaining_quantity,json=remainingQuantity,proto3" json:"remaining_quantity,omitempty"`
+	Version           int64                  `protobuf:"varint,5,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *BuyerStockEntry) Reset() {
+	*x = BuyerStockEntry{}
+	mi := &file_survival_v1_economy_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BuyerStockEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BuyerStockEntry) ProtoMessage() {}
+
+func (x *BuyerStockEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_survival_v1_economy_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BuyerStockEntry.ProtoReflect.Descriptor instead.
+func (*BuyerStockEntry) Descriptor() ([]byte, []int) {
+	return file_survival_v1_economy_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *BuyerStockEntry) GetStockEntryId() string {
+	if x != nil {
+		return x.StockEntryId
+	}
+	return ""
+}
+
+func (x *BuyerStockEntry) GetItemDefinitionId() string {
+	if x != nil {
+		return x.ItemDefinitionId
+	}
+	return ""
+}
+
+func (x *BuyerStockEntry) GetUnitPrice() int64 {
+	if x != nil {
+		return x.UnitPrice
+	}
+	return 0
+}
+
+func (x *BuyerStockEntry) GetRemainingQuantity() int32 {
+	if x != nil {
+		return x.RemainingQuantity
+	}
+	return 0
+}
+
+func (x *BuyerStockEntry) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+type RegisterBuyerResponse struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	BuyerInstanceId string                 `protobuf:"bytes,1,opt,name=buyer_instance_id,json=buyerInstanceId,proto3" json:"buyer_instance_id,omitempty"`
+	Stock           []*BuyerStockEntry     `protobuf:"bytes,2,rep,name=stock,proto3" json:"stock,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RegisterBuyerResponse) Reset() {
+	*x = RegisterBuyerResponse{}
+	mi := &file_survival_v1_economy_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterBuyerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterBuyerResponse) ProtoMessage() {}
+
+func (x *RegisterBuyerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_survival_v1_economy_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterBuyerResponse.ProtoReflect.Descriptor instead.
+func (*RegisterBuyerResponse) Descriptor() ([]byte, []int) {
+	return file_survival_v1_economy_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RegisterBuyerResponse) GetBuyerInstanceId() string {
+	if x != nil {
+		return x.BuyerInstanceId
+	}
+	return ""
+}
+
+func (x *RegisterBuyerResponse) GetStock() []*BuyerStockEntry {
+	if x != nil {
+		return x.Stock
+	}
+	return nil
+}
+
+type DespawnBuyerRequest struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	BuyerInstanceId string                 `protobuf:"bytes,1,opt,name=buyer_instance_id,json=buyerInstanceId,proto3" json:"buyer_instance_id,omitempty"`
+	// PREPARING：新規購入拒否・開始済Txのみ完了 / DESPAWNED：締め
+	TargetStatus  string `protobuf:"bytes,2,opt,name=target_status,json=targetStatus,proto3" json:"target_status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DespawnBuyerRequest) Reset() {
+	*x = DespawnBuyerRequest{}
+	mi := &file_survival_v1_economy_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DespawnBuyerRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DespawnBuyerRequest) ProtoMessage() {}
+
+func (x *DespawnBuyerRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_survival_v1_economy_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DespawnBuyerRequest.ProtoReflect.Descriptor instead.
+func (*DespawnBuyerRequest) Descriptor() ([]byte, []int) {
+	return file_survival_v1_economy_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *DespawnBuyerRequest) GetBuyerInstanceId() string {
+	if x != nil {
+		return x.BuyerInstanceId
+	}
+	return ""
+}
+
+func (x *DespawnBuyerRequest) GetTargetStatus() string {
+	if x != nil {
+		return x.TargetStatus
+	}
+	return ""
+}
+
+type DespawnBuyerResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status        ResultStatus           `protobuf:"varint,1,opt,name=status,proto3,enum=survival.v1.ResultStatus" json:"status,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DespawnBuyerResponse) Reset() {
+	*x = DespawnBuyerResponse{}
+	mi := &file_survival_v1_economy_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DespawnBuyerResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DespawnBuyerResponse) ProtoMessage() {}
+
+func (x *DespawnBuyerResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_survival_v1_economy_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DespawnBuyerResponse.ProtoReflect.Descriptor instead.
+func (*DespawnBuyerResponse) Descriptor() ([]byte, []int) {
+	return file_survival_v1_economy_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *DespawnBuyerResponse) GetStatus() ResultStatus {
+	if x != nil {
+		return x.Status
+	}
+	return ResultStatus_RESULT_STATUS_UNSPECIFIED
+}
+
 var File_survival_v1_economy_proto protoreflect.FileDescriptor
 
 const file_survival_v1_economy_proto_rawDesc = "" +
@@ -384,18 +711,44 @@ const file_survival_v1_economy_proto_rawDesc = "" +
 	"\x12CommitSaleResponse\x121\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x19.survival.v1.ResultStatusR\x06status\x12.\n" +
 	"\bproceeds\x18\x02 \x01(\v2\x12.survival.v1.MoneyR\bproceeds\x12E\n" +
-	"\x1fnew_persisted_inventory_version\x18\x03 \x01(\x03R\x1cnewPersistedInventoryVersion*\xd7\x01\n" +
+	"\x1fnew_persisted_inventory_version\x18\x03 \x01(\x03R\x1cnewPersistedInventoryVersion\"\xbb\x02\n" +
+	"\x14RegisterBuyerRequest\x12'\n" +
+	"\x0fidempotency_key\x18\x01 \x01(\tR\x0eidempotencyKey\x12\x19\n" +
+	"\bworld_id\x18\x02 \x01(\tR\aworldId\x12\x1b\n" +
+	"\tregion_id\x18\x03 \x01(\tR\bregionId\x12\x12\n" +
+	"\x04seed\x18\x04 \x01(\x03R\x04seed\x12,\n" +
+	"\x12inventory_table_id\x18\x05 \x01(\tR\x10inventoryTableId\x12*\n" +
+	"\x11price_modifier_bp\x18\x06 \x01(\x05R\x0fpriceModifierBp\x12'\n" +
+	"\x10spawn_at_unix_ms\x18\a \x01(\x03R\rspawnAtUnixMs\x12+\n" +
+	"\x12despawn_at_unix_ms\x18\b \x01(\x03R\x0fdespawnAtUnixMs\"\xcd\x01\n" +
+	"\x0fBuyerStockEntry\x12$\n" +
+	"\x0estock_entry_id\x18\x01 \x01(\tR\fstockEntryId\x12,\n" +
+	"\x12item_definition_id\x18\x02 \x01(\tR\x10itemDefinitionId\x12\x1d\n" +
+	"\n" +
+	"unit_price\x18\x03 \x01(\x03R\tunitPrice\x12-\n" +
+	"\x12remaining_quantity\x18\x04 \x01(\x05R\x11remainingQuantity\x12\x18\n" +
+	"\aversion\x18\x05 \x01(\x03R\aversion\"w\n" +
+	"\x15RegisterBuyerResponse\x12*\n" +
+	"\x11buyer_instance_id\x18\x01 \x01(\tR\x0fbuyerInstanceId\x122\n" +
+	"\x05stock\x18\x02 \x03(\v2\x1c.survival.v1.BuyerStockEntryR\x05stock\"f\n" +
+	"\x13DespawnBuyerRequest\x12*\n" +
+	"\x11buyer_instance_id\x18\x01 \x01(\tR\x0fbuyerInstanceId\x12#\n" +
+	"\rtarget_status\x18\x02 \x01(\tR\ftargetStatus\"I\n" +
+	"\x14DespawnBuyerResponse\x121\n" +
+	"\x06status\x18\x01 \x01(\x0e2\x19.survival.v1.ResultStatusR\x06status*\xd7\x01\n" +
 	"\x0ePurchaseStatus\x12\x1f\n" +
 	"\x1bPURCHASE_STATUS_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19PURCHASE_STATUS_COMMITTED\x10\x01\x12\x1d\n" +
 	"\x19PURCHASE_STATUS_DUPLICATE\x10\x02\x12 \n" +
 	"\x1cPURCHASE_STATUS_OUT_OF_STOCK\x10\x03\x12&\n" +
 	"\"PURCHASE_STATUS_INSUFFICIENT_FUNDS\x10\x04\x12\x1c\n" +
-	"\x18PURCHASE_STATUS_REJECTED\x10\x052\xba\x01\n" +
+	"\x18PURCHASE_STATUS_REJECTED\x10\x052\xe7\x02\n" +
 	"\x0eEconomyService\x12Y\n" +
 	"\x0eCommitPurchase\x12\".survival.v1.CommitPurchaseRequest\x1a#.survival.v1.CommitPurchaseResponse\x12M\n" +
 	"\n" +
-	"CommitSale\x12\x1e.survival.v1.CommitSaleRequest\x1a\x1f.survival.v1.CommitSaleResponseB\xaa\x01\n" +
+	"CommitSale\x12\x1e.survival.v1.CommitSaleRequest\x1a\x1f.survival.v1.CommitSaleResponse\x12V\n" +
+	"\rRegisterBuyer\x12!.survival.v1.RegisterBuyerRequest\x1a\".survival.v1.RegisterBuyerResponse\x12S\n" +
+	"\fDespawnBuyer\x12 .survival.v1.DespawnBuyerRequest\x1a!.survival.v1.DespawnBuyerResponseB\xaa\x01\n" +
 	"\x0fcom.survival.v1B\fEconomyProtoP\x01Z<living-world-survival/services/gen/go/survival/v1;survivalv1\xa2\x02\x03SXX\xaa\x02\vSurvival.V1\xca\x02\vSurvival\\V1\xe2\x02\x17Survival\\V1\\GPBMetadata\xea\x02\fSurvival::V1b\x06proto3"
 
 var (
@@ -411,33 +764,44 @@ func file_survival_v1_economy_proto_rawDescGZIP() []byte {
 }
 
 var file_survival_v1_economy_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_survival_v1_economy_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_survival_v1_economy_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_survival_v1_economy_proto_goTypes = []any{
 	(PurchaseStatus)(0),            // 0: survival.v1.PurchaseStatus
 	(*CommitPurchaseRequest)(nil),  // 1: survival.v1.CommitPurchaseRequest
 	(*CommitPurchaseResponse)(nil), // 2: survival.v1.CommitPurchaseResponse
 	(*CommitSaleRequest)(nil),      // 3: survival.v1.CommitSaleRequest
 	(*CommitSaleResponse)(nil),     // 4: survival.v1.CommitSaleResponse
-	(*ItemRef)(nil),                // 5: survival.v1.ItemRef
-	(*Money)(nil),                  // 6: survival.v1.Money
-	(ResultStatus)(0),              // 7: survival.v1.ResultStatus
+	(*RegisterBuyerRequest)(nil),   // 5: survival.v1.RegisterBuyerRequest
+	(*BuyerStockEntry)(nil),        // 6: survival.v1.BuyerStockEntry
+	(*RegisterBuyerResponse)(nil),  // 7: survival.v1.RegisterBuyerResponse
+	(*DespawnBuyerRequest)(nil),    // 8: survival.v1.DespawnBuyerRequest
+	(*DespawnBuyerResponse)(nil),   // 9: survival.v1.DespawnBuyerResponse
+	(*ItemRef)(nil),                // 10: survival.v1.ItemRef
+	(*Money)(nil),                  // 11: survival.v1.Money
+	(ResultStatus)(0),              // 12: survival.v1.ResultStatus
 }
 var file_survival_v1_economy_proto_depIdxs = []int32{
-	0, // 0: survival.v1.CommitPurchaseResponse.status:type_name -> survival.v1.PurchaseStatus
-	5, // 1: survival.v1.CommitPurchaseResponse.granted_items:type_name -> survival.v1.ItemRef
-	6, // 2: survival.v1.CommitPurchaseResponse.charged:type_name -> survival.v1.Money
-	5, // 3: survival.v1.CommitSaleRequest.items:type_name -> survival.v1.ItemRef
-	7, // 4: survival.v1.CommitSaleResponse.status:type_name -> survival.v1.ResultStatus
-	6, // 5: survival.v1.CommitSaleResponse.proceeds:type_name -> survival.v1.Money
-	1, // 6: survival.v1.EconomyService.CommitPurchase:input_type -> survival.v1.CommitPurchaseRequest
-	3, // 7: survival.v1.EconomyService.CommitSale:input_type -> survival.v1.CommitSaleRequest
-	2, // 8: survival.v1.EconomyService.CommitPurchase:output_type -> survival.v1.CommitPurchaseResponse
-	4, // 9: survival.v1.EconomyService.CommitSale:output_type -> survival.v1.CommitSaleResponse
-	8, // [8:10] is the sub-list for method output_type
-	6, // [6:8] is the sub-list for method input_type
-	6, // [6:6] is the sub-list for extension type_name
-	6, // [6:6] is the sub-list for extension extendee
-	0, // [0:6] is the sub-list for field type_name
+	0,  // 0: survival.v1.CommitPurchaseResponse.status:type_name -> survival.v1.PurchaseStatus
+	10, // 1: survival.v1.CommitPurchaseResponse.granted_items:type_name -> survival.v1.ItemRef
+	11, // 2: survival.v1.CommitPurchaseResponse.charged:type_name -> survival.v1.Money
+	10, // 3: survival.v1.CommitSaleRequest.items:type_name -> survival.v1.ItemRef
+	12, // 4: survival.v1.CommitSaleResponse.status:type_name -> survival.v1.ResultStatus
+	11, // 5: survival.v1.CommitSaleResponse.proceeds:type_name -> survival.v1.Money
+	6,  // 6: survival.v1.RegisterBuyerResponse.stock:type_name -> survival.v1.BuyerStockEntry
+	12, // 7: survival.v1.DespawnBuyerResponse.status:type_name -> survival.v1.ResultStatus
+	1,  // 8: survival.v1.EconomyService.CommitPurchase:input_type -> survival.v1.CommitPurchaseRequest
+	3,  // 9: survival.v1.EconomyService.CommitSale:input_type -> survival.v1.CommitSaleRequest
+	5,  // 10: survival.v1.EconomyService.RegisterBuyer:input_type -> survival.v1.RegisterBuyerRequest
+	8,  // 11: survival.v1.EconomyService.DespawnBuyer:input_type -> survival.v1.DespawnBuyerRequest
+	2,  // 12: survival.v1.EconomyService.CommitPurchase:output_type -> survival.v1.CommitPurchaseResponse
+	4,  // 13: survival.v1.EconomyService.CommitSale:output_type -> survival.v1.CommitSaleResponse
+	7,  // 14: survival.v1.EconomyService.RegisterBuyer:output_type -> survival.v1.RegisterBuyerResponse
+	9,  // 15: survival.v1.EconomyService.DespawnBuyer:output_type -> survival.v1.DespawnBuyerResponse
+	12, // [12:16] is the sub-list for method output_type
+	8,  // [8:12] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_survival_v1_economy_proto_init() }
@@ -452,7 +816,7 @@ func file_survival_v1_economy_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_survival_v1_economy_proto_rawDesc), len(file_survival_v1_economy_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   4,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -53,6 +53,14 @@ namespace Survival.V1 {
     static readonly grpc::Marshaller<global::Survival.V1.CommitSaleRequest> __Marshaller_survival_v1_CommitSaleRequest = grpc::Marshallers.Create(__Helper_SerializeMessage, context => __Helper_DeserializeMessage(context, global::Survival.V1.CommitSaleRequest.Parser));
     [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
     static readonly grpc::Marshaller<global::Survival.V1.CommitSaleResponse> __Marshaller_survival_v1_CommitSaleResponse = grpc::Marshallers.Create(__Helper_SerializeMessage, context => __Helper_DeserializeMessage(context, global::Survival.V1.CommitSaleResponse.Parser));
+    [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+    static readonly grpc::Marshaller<global::Survival.V1.RegisterBuyerRequest> __Marshaller_survival_v1_RegisterBuyerRequest = grpc::Marshallers.Create(__Helper_SerializeMessage, context => __Helper_DeserializeMessage(context, global::Survival.V1.RegisterBuyerRequest.Parser));
+    [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+    static readonly grpc::Marshaller<global::Survival.V1.RegisterBuyerResponse> __Marshaller_survival_v1_RegisterBuyerResponse = grpc::Marshallers.Create(__Helper_SerializeMessage, context => __Helper_DeserializeMessage(context, global::Survival.V1.RegisterBuyerResponse.Parser));
+    [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+    static readonly grpc::Marshaller<global::Survival.V1.DespawnBuyerRequest> __Marshaller_survival_v1_DespawnBuyerRequest = grpc::Marshallers.Create(__Helper_SerializeMessage, context => __Helper_DeserializeMessage(context, global::Survival.V1.DespawnBuyerRequest.Parser));
+    [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+    static readonly grpc::Marshaller<global::Survival.V1.DespawnBuyerResponse> __Marshaller_survival_v1_DespawnBuyerResponse = grpc::Marshallers.Create(__Helper_SerializeMessage, context => __Helper_DeserializeMessage(context, global::Survival.V1.DespawnBuyerResponse.Parser));
 
     [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
     static readonly grpc::Method<global::Survival.V1.CommitPurchaseRequest, global::Survival.V1.CommitPurchaseResponse> __Method_CommitPurchase = new grpc::Method<global::Survival.V1.CommitPurchaseRequest, global::Survival.V1.CommitPurchaseResponse>(
@@ -69,6 +77,22 @@ namespace Survival.V1 {
         "CommitSale",
         __Marshaller_survival_v1_CommitSaleRequest,
         __Marshaller_survival_v1_CommitSaleResponse);
+
+    [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+    static readonly grpc::Method<global::Survival.V1.RegisterBuyerRequest, global::Survival.V1.RegisterBuyerResponse> __Method_RegisterBuyer = new grpc::Method<global::Survival.V1.RegisterBuyerRequest, global::Survival.V1.RegisterBuyerResponse>(
+        grpc::MethodType.Unary,
+        __ServiceName,
+        "RegisterBuyer",
+        __Marshaller_survival_v1_RegisterBuyerRequest,
+        __Marshaller_survival_v1_RegisterBuyerResponse);
+
+    [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+    static readonly grpc::Method<global::Survival.V1.DespawnBuyerRequest, global::Survival.V1.DespawnBuyerResponse> __Method_DespawnBuyer = new grpc::Method<global::Survival.V1.DespawnBuyerRequest, global::Survival.V1.DespawnBuyerResponse>(
+        grpc::MethodType.Unary,
+        __ServiceName,
+        "DespawnBuyer",
+        __Marshaller_survival_v1_DespawnBuyerRequest,
+        __Marshaller_survival_v1_DespawnBuyerResponse);
 
     /// <summary>Service descriptor</summary>
     public static global::Google.Protobuf.Reflection.ServiceDescriptor Descriptor
@@ -100,6 +124,30 @@ namespace Survival.V1 {
       /// <returns>The response to send back to the client (wrapped by a task).</returns>
       [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
       public virtual global::System.Threading.Tasks.Task<global::Survival.V1.CommitSaleResponse> CommitSale(global::Survival.V1.CommitSaleRequest request, grpc::ServerCallContext context)
+      {
+        throw new grpc::RpcException(new grpc::Status(grpc::StatusCode.Unimplemented, ""));
+      }
+
+      /// <summary>
+      /// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+      /// </summary>
+      /// <param name="request">The request received from the client.</param>
+      /// <param name="context">The context of the server-side call handler being invoked.</param>
+      /// <returns>The response to send back to the client (wrapped by a task).</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual global::System.Threading.Tasks.Task<global::Survival.V1.RegisterBuyerResponse> RegisterBuyer(global::Survival.V1.RegisterBuyerRequest request, grpc::ServerCallContext context)
+      {
+        throw new grpc::RpcException(new grpc::Status(grpc::StatusCode.Unimplemented, ""));
+      }
+
+      /// <summary>
+      /// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+      /// </summary>
+      /// <param name="request">The request received from the client.</param>
+      /// <param name="context">The context of the server-side call handler being invoked.</param>
+      /// <returns>The response to send back to the client (wrapped by a task).</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual global::System.Threading.Tasks.Task<global::Survival.V1.DespawnBuyerResponse> DespawnBuyer(global::Survival.V1.DespawnBuyerRequest request, grpc::ServerCallContext context)
       {
         throw new grpc::RpcException(new grpc::Status(grpc::StatusCode.Unimplemented, ""));
       }
@@ -229,6 +277,102 @@ namespace Survival.V1 {
       {
         return CallInvoker.AsyncUnaryCall(__Method_CommitSale, null, options, request);
       }
+      /// <summary>
+      /// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="headers">The initial metadata to send with the call. This parameter is optional.</param>
+      /// <param name="deadline">An optional deadline for the call. The call will be cancelled if deadline is hit.</param>
+      /// <param name="cancellationToken">An optional token for canceling the call.</param>
+      /// <returns>The response received from the server.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual global::Survival.V1.RegisterBuyerResponse RegisterBuyer(global::Survival.V1.RegisterBuyerRequest request, grpc::Metadata headers = null, global::System.DateTime? deadline = null, global::System.Threading.CancellationToken cancellationToken = default(global::System.Threading.CancellationToken))
+      {
+        return RegisterBuyer(request, new grpc::CallOptions(headers, deadline, cancellationToken));
+      }
+      /// <summary>
+      /// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="options">The options for the call.</param>
+      /// <returns>The response received from the server.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual global::Survival.V1.RegisterBuyerResponse RegisterBuyer(global::Survival.V1.RegisterBuyerRequest request, grpc::CallOptions options)
+      {
+        return CallInvoker.BlockingUnaryCall(__Method_RegisterBuyer, null, options, request);
+      }
+      /// <summary>
+      /// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="headers">The initial metadata to send with the call. This parameter is optional.</param>
+      /// <param name="deadline">An optional deadline for the call. The call will be cancelled if deadline is hit.</param>
+      /// <param name="cancellationToken">An optional token for canceling the call.</param>
+      /// <returns>The call object.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual grpc::AsyncUnaryCall<global::Survival.V1.RegisterBuyerResponse> RegisterBuyerAsync(global::Survival.V1.RegisterBuyerRequest request, grpc::Metadata headers = null, global::System.DateTime? deadline = null, global::System.Threading.CancellationToken cancellationToken = default(global::System.Threading.CancellationToken))
+      {
+        return RegisterBuyerAsync(request, new grpc::CallOptions(headers, deadline, cancellationToken));
+      }
+      /// <summary>
+      /// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="options">The options for the call.</param>
+      /// <returns>The call object.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual grpc::AsyncUnaryCall<global::Survival.V1.RegisterBuyerResponse> RegisterBuyerAsync(global::Survival.V1.RegisterBuyerRequest request, grpc::CallOptions options)
+      {
+        return CallInvoker.AsyncUnaryCall(__Method_RegisterBuyer, null, options, request);
+      }
+      /// <summary>
+      /// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="headers">The initial metadata to send with the call. This parameter is optional.</param>
+      /// <param name="deadline">An optional deadline for the call. The call will be cancelled if deadline is hit.</param>
+      /// <param name="cancellationToken">An optional token for canceling the call.</param>
+      /// <returns>The response received from the server.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual global::Survival.V1.DespawnBuyerResponse DespawnBuyer(global::Survival.V1.DespawnBuyerRequest request, grpc::Metadata headers = null, global::System.DateTime? deadline = null, global::System.Threading.CancellationToken cancellationToken = default(global::System.Threading.CancellationToken))
+      {
+        return DespawnBuyer(request, new grpc::CallOptions(headers, deadline, cancellationToken));
+      }
+      /// <summary>
+      /// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="options">The options for the call.</param>
+      /// <returns>The response received from the server.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual global::Survival.V1.DespawnBuyerResponse DespawnBuyer(global::Survival.V1.DespawnBuyerRequest request, grpc::CallOptions options)
+      {
+        return CallInvoker.BlockingUnaryCall(__Method_DespawnBuyer, null, options, request);
+      }
+      /// <summary>
+      /// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="headers">The initial metadata to send with the call. This parameter is optional.</param>
+      /// <param name="deadline">An optional deadline for the call. The call will be cancelled if deadline is hit.</param>
+      /// <param name="cancellationToken">An optional token for canceling the call.</param>
+      /// <returns>The call object.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual grpc::AsyncUnaryCall<global::Survival.V1.DespawnBuyerResponse> DespawnBuyerAsync(global::Survival.V1.DespawnBuyerRequest request, grpc::Metadata headers = null, global::System.DateTime? deadline = null, global::System.Threading.CancellationToken cancellationToken = default(global::System.Threading.CancellationToken))
+      {
+        return DespawnBuyerAsync(request, new grpc::CallOptions(headers, deadline, cancellationToken));
+      }
+      /// <summary>
+      /// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+      /// </summary>
+      /// <param name="request">The request to send to the server.</param>
+      /// <param name="options">The options for the call.</param>
+      /// <returns>The call object.</returns>
+      [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
+      public virtual grpc::AsyncUnaryCall<global::Survival.V1.DespawnBuyerResponse> DespawnBuyerAsync(global::Survival.V1.DespawnBuyerRequest request, grpc::CallOptions options)
+      {
+        return CallInvoker.AsyncUnaryCall(__Method_DespawnBuyer, null, options, request);
+      }
       /// <summary>Creates a new instance of client from given <c>ClientBaseConfiguration</c>.</summary>
       [global::System.CodeDom.Compiler.GeneratedCode("grpc_csharp_plugin", null)]
       protected override EconomyServiceClient NewInstance(ClientBaseConfiguration configuration)
@@ -244,7 +388,9 @@ namespace Survival.V1 {
     {
       return grpc::ServerServiceDefinition.CreateBuilder()
           .AddMethod(__Method_CommitPurchase, serviceImpl.CommitPurchase)
-          .AddMethod(__Method_CommitSale, serviceImpl.CommitSale).Build();
+          .AddMethod(__Method_CommitSale, serviceImpl.CommitSale)
+          .AddMethod(__Method_RegisterBuyer, serviceImpl.RegisterBuyer)
+          .AddMethod(__Method_DespawnBuyer, serviceImpl.DespawnBuyer).Build();
     }
 
     /// <summary>Register service method with a service binder with or without implementation. Useful when customizing the service binding logic.
@@ -256,6 +402,8 @@ namespace Survival.V1 {
     {
       serviceBinder.AddMethod(__Method_CommitPurchase, serviceImpl == null ? null : new grpc::UnaryServerMethod<global::Survival.V1.CommitPurchaseRequest, global::Survival.V1.CommitPurchaseResponse>(serviceImpl.CommitPurchase));
       serviceBinder.AddMethod(__Method_CommitSale, serviceImpl == null ? null : new grpc::UnaryServerMethod<global::Survival.V1.CommitSaleRequest, global::Survival.V1.CommitSaleResponse>(serviceImpl.CommitSale));
+      serviceBinder.AddMethod(__Method_RegisterBuyer, serviceImpl == null ? null : new grpc::UnaryServerMethod<global::Survival.V1.RegisterBuyerRequest, global::Survival.V1.RegisterBuyerResponse>(serviceImpl.RegisterBuyer));
+      serviceBinder.AddMethod(__Method_DespawnBuyer, serviceImpl == null ? null : new grpc::UnaryServerMethod<global::Survival.V1.DespawnBuyerRequest, global::Survival.V1.DespawnBuyerResponse>(serviceImpl.DespawnBuyer));
     }
 
   }

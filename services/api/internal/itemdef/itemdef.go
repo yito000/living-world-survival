@@ -20,6 +20,11 @@ const maxRarity = 3
 // ConsumeHunger, WasteOutput, IsInstance — 7.2 / 06B 3.1) drive the survival
 // loop: Hunger recovery on consume, waste produced by cooking, and whether the
 // item is a durability/quality-bearing individual (item_instances).
+//
+// The M6 price fields (09B 3.4/3.7/3.9) are the authoritative economy inputs:
+// BaseValue is the purchase base a Buyer's unit_price is derived from, and
+// SellPrice is what CommitSale pays out and what the ranking batch values held
+// items at. Both are minimum-currency-unit integers — never floats (13.1).
 type Definition struct {
 	ItemDefinitionID string          `json:"item_definition_id"`
 	PrimaryTag       string          `json:"primary_tag"`
@@ -28,6 +33,7 @@ type Definition struct {
 	WeightMilli      int             `json:"weight_milli"`
 	Rarity           int             `json:"rarity"`
 	BaseValue        int64           `json:"base_value"`
+	SellPrice        int64           `json:"sell_price"`
 	ConsumeHunger    int             `json:"consume_hunger"`
 	WasteOutput      int             `json:"waste_output"`
 	IsInstance       bool            `json:"is_instance"`
@@ -87,6 +93,14 @@ func newCatalog(defs []Definition) (*Catalog, error) {
 		if d.WasteOutput < 0 {
 			return nil, fmt.Errorf("itemdef: %s waste_output must be >= 0", d.ItemDefinitionID)
 		}
+		// Negative prices would let a purchase credit the buyer or a sale drain
+		// the seller's ledger (MVP 12.2 の残高検証を素通りする).
+		if d.BaseValue < 0 {
+			return nil, fmt.Errorf("itemdef: %s base_value must be >= 0", d.ItemDefinitionID)
+		}
+		if d.SellPrice < 0 {
+			return nil, fmt.Errorf("itemdef: %s sell_price must be >= 0", d.ItemDefinitionID)
+		}
 		// primary_tag defaults to the first tag so older masters remain valid.
 		if d.PrimaryTag == "" && len(d.Tags) > 0 {
 			d.PrimaryTag = d.Tags[0]
@@ -107,6 +121,35 @@ func (c *Catalog) Get(id string) (Definition, bool) {
 // All returns all definitions.
 func (c *Catalog) All() []Definition { return c.list }
 
+// ByTag returns the ids of every definition carrying tag, used by M6 Buyer stock
+// generation to resolve a drawn item_tag to a concrete item (09B 3.5 手順4).
+// Matching is exact against the tags list, which in the master always includes
+// primary_tag.
+func (c *Catalog) ByTag(tag string) []string {
+	var ids []string
+	for _, d := range c.list {
+		for _, t := range d.Tags {
+			if t == tag {
+				ids = append(ids, d.ItemDefinitionID)
+				break
+			}
+		}
+	}
+	return ids
+}
+
+// BaseValue returns the purchase base price for id (09B 3.4).
+func (c *Catalog) BaseValue(id string) (int64, bool) {
+	d, ok := c.byID[id]
+	return d.BaseValue, ok
+}
+
+// SellPrice returns the sale payout / valuation price for id (09B 3.7 / 3.9).
+func (c *Catalog) SellPrice(id string) (int64, bool) {
+	d, ok := c.byID[id]
+	return d.SellPrice, ok
+}
+
 // Len returns the number of definitions.
 func (c *Catalog) Len() int { return len(c.list) }
 
@@ -125,6 +168,7 @@ func (c *Catalog) Seed(ctx context.Context, st *store.Store) error {
 			WeightMilli:   d.WeightMilli,
 			Rarity:        d.Rarity,
 			BaseValue:     d.BaseValue,
+			SellPrice:     d.SellPrice,
 			ConsumeHunger: d.ConsumeHunger,
 			WasteOutput:   d.WasteOutput,
 			IsInstance:    d.IsInstance,

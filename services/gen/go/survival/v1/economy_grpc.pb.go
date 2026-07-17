@@ -21,6 +21,8 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	EconomyService_CommitPurchase_FullMethodName = "/survival.v1.EconomyService/CommitPurchase"
 	EconomyService_CommitSale_FullMethodName     = "/survival.v1.EconomyService/CommitSale"
+	EconomyService_RegisterBuyer_FullMethodName  = "/survival.v1.EconomyService/RegisterBuyer"
+	EconomyService_DespawnBuyer_FullMethodName   = "/survival.v1.EconomyService/DespawnBuyer"
 )
 
 // EconomyServiceClient is the client API for EconomyService service.
@@ -31,6 +33,10 @@ type EconomyServiceClient interface {
 	CommitPurchase(ctx context.Context, in *CommitPurchaseRequest, opts ...grpc.CallOption) (*CommitPurchaseResponse, error)
 	// 売却を単一 Tx で確定。
 	CommitSale(ctx context.Context, in *CommitSaleRequest, opts ...grpc.CallOption) (*CommitSaleResponse, error)
+	// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+	RegisterBuyer(ctx context.Context, in *RegisterBuyerRequest, opts ...grpc.CallOption) (*RegisterBuyerResponse, error)
+	// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+	DespawnBuyer(ctx context.Context, in *DespawnBuyerRequest, opts ...grpc.CallOption) (*DespawnBuyerResponse, error)
 }
 
 type economyServiceClient struct {
@@ -61,6 +67,26 @@ func (c *economyServiceClient) CommitSale(ctx context.Context, in *CommitSaleReq
 	return out, nil
 }
 
+func (c *economyServiceClient) RegisterBuyer(ctx context.Context, in *RegisterBuyerRequest, opts ...grpc.CallOption) (*RegisterBuyerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterBuyerResponse)
+	err := c.cc.Invoke(ctx, EconomyService_RegisterBuyer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *economyServiceClient) DespawnBuyer(ctx context.Context, in *DespawnBuyerRequest, opts ...grpc.CallOption) (*DespawnBuyerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DespawnBuyerResponse)
+	err := c.cc.Invoke(ctx, EconomyService_DespawnBuyer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // EconomyServiceServer is the server API for EconomyService service.
 // All implementations must embed UnimplementedEconomyServiceServer
 // for forward compatibility.
@@ -69,6 +95,10 @@ type EconomyServiceServer interface {
 	CommitPurchase(context.Context, *CommitPurchaseRequest) (*CommitPurchaseResponse, error)
 	// 売却を単一 Tx で確定。
 	CommitSale(context.Context, *CommitSaleRequest) (*CommitSaleResponse, error)
+	// M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+	RegisterBuyer(context.Context, *RegisterBuyerRequest) (*RegisterBuyerResponse, error)
+	// M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+	DespawnBuyer(context.Context, *DespawnBuyerRequest) (*DespawnBuyerResponse, error)
 	mustEmbedUnimplementedEconomyServiceServer()
 }
 
@@ -84,6 +114,12 @@ func (UnimplementedEconomyServiceServer) CommitPurchase(context.Context, *Commit
 }
 func (UnimplementedEconomyServiceServer) CommitSale(context.Context, *CommitSaleRequest) (*CommitSaleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CommitSale not implemented")
+}
+func (UnimplementedEconomyServiceServer) RegisterBuyer(context.Context, *RegisterBuyerRequest) (*RegisterBuyerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegisterBuyer not implemented")
+}
+func (UnimplementedEconomyServiceServer) DespawnBuyer(context.Context, *DespawnBuyerRequest) (*DespawnBuyerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DespawnBuyer not implemented")
 }
 func (UnimplementedEconomyServiceServer) mustEmbedUnimplementedEconomyServiceServer() {}
 func (UnimplementedEconomyServiceServer) testEmbeddedByValue()                        {}
@@ -142,6 +178,42 @@ func _EconomyService_CommitSale_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _EconomyService_RegisterBuyer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterBuyerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EconomyServiceServer).RegisterBuyer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EconomyService_RegisterBuyer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EconomyServiceServer).RegisterBuyer(ctx, req.(*RegisterBuyerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _EconomyService_DespawnBuyer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DespawnBuyerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(EconomyServiceServer).DespawnBuyer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: EconomyService_DespawnBuyer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(EconomyServiceServer).DespawnBuyer(ctx, req.(*DespawnBuyerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // EconomyService_ServiceDesc is the grpc.ServiceDesc for EconomyService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -156,6 +228,14 @@ var EconomyService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CommitSale",
 			Handler:    _EconomyService_CommitSale_Handler,
+		},
+		{
+			MethodName: "RegisterBuyer",
+			Handler:    _EconomyService_RegisterBuyer_Handler,
+		},
+		{
+			MethodName: "DespawnBuyer",
+			Handler:    _EconomyService_DespawnBuyer_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -24,9 +25,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	"living-world-survival/services/api/internal/config"
+	"living-world-survival/services/api/internal/economy"
 	"living-world-survival/services/api/internal/grpcserver"
 	"living-world-survival/services/api/internal/itemdef"
 	"living-world-survival/services/api/internal/outbox"
+	"living-world-survival/services/api/internal/ranking"
 	"living-world-survival/services/api/internal/store"
 	"living-world-survival/services/api/internal/worldevent"
 	survivalv1 "living-world-survival/services/gen/go/survival/v1"
@@ -64,6 +67,19 @@ func main() {
 	// just not announced (3.6).
 	weServer := &worldevent.Server{Store: st}
 
+	// EconomyService owns the purchase/sale commits and Buyer stock (M6). Its
+	// Buyer Stock Definitions are embedded and validated at load, so a broken
+	// table is a startup failure rather than a failed purchase at runtime.
+	economyServer, err := economy.NewServer(st, catalog)
+	if err != nil {
+		log.Fatalf("apid: economy: %v", err)
+	}
+
+	// The asset ranking batch is heavy, so it runs on its own goroutine and never
+	// inside a request handler (MVP 12.3 / 09B 3.9).
+	rankingBatch := ranking.New(st)
+	go rankingBatch.RunPeriodically(ctx, cfg.RankingInterval)
+
 	// Connect to NATS in the background, then start the outbox relay and the
 	// world event proposal approver.
 	var nc atomic.Pointer[nats.Conn]
@@ -77,8 +93,8 @@ func main() {
 		startRelay(ctx, c, st, cfg)
 	}()
 
-	httpSrv := newHTTPServer(cfg, pool, &nc)
-	grpcSrv := newGRPCServer(cfg, st, weServer)
+	httpSrv := newHTTPServer(cfg, pool, &nc, rankingBatch)
+	grpcSrv := newGRPCServer(cfg, st, weServer, economyServer)
 
 	go func() {
 		log.Printf("apid: HTTP listening on %s", cfg.HTTPAddr)
@@ -113,11 +129,12 @@ func main() {
 	log.Printf("apid: stopped")
 }
 
-func newHTTPServer(cfg *config.Config, pool *pgxpool.Pool, nc *atomic.Pointer[nats.Conn]) *http.Server {
+func newHTTPServer(cfg *config.Config, pool *pgxpool.Pool, nc *atomic.Pointer[nats.Conn], rankingBatch *ranking.Batch) *http.Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, `{"status":"ok","service":"api"}`)
 	})
+	mux.HandleFunc("/admin/ranking/run", adminRankingHandler(rankingBatch))
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
@@ -139,7 +156,7 @@ func newHTTPServer(cfg *config.Config, pool *pgxpool.Pool, nc *atomic.Pointer[na
 	}
 }
 
-func newGRPCServer(cfg *config.Config, st *store.Store, we *worldevent.Server) *grpclib.Server {
+func newGRPCServer(cfg *config.Config, st *store.Store, we *worldevent.Server, ec *economy.Server) *grpclib.Server {
 	var opts []grpclib.ServerOption
 	if cfg.GRPCSharedSecret != "" {
 		opts = append(opts, grpclib.UnaryInterceptor(sharedSecretInterceptor(cfg.GRPCSharedSecret)))
@@ -148,7 +165,37 @@ func newGRPCServer(cfg *config.Config, st *store.Store, we *worldevent.Server) *
 	survivalv1.RegisterWorldDataServiceServer(s, &grpcserver.WorldDataServer{Store: st})
 	survivalv1.RegisterActorStateServiceServer(s, &grpcserver.ActorStateServer{Store: st})
 	survivalv1.RegisterWorldEventServiceServer(s, we)
+	survivalv1.RegisterEconomyServiceServer(s, ec)
 	return s
+}
+
+// adminRankingHandler triggers one ranking run on demand (09B 3.9 管理コマンド).
+// It is an internal-only endpoint (MVP-SEC-001): the API's HTTP port is not
+// exposed outside the internal network.
+func adminRankingHandler(b *ranking.Batch) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, `{"error":"POST required"}`)
+			return
+		}
+		// Detach from the request: the run must survive the client hanging up, and
+		// a heavy run must not be cancelled halfway through writing a generation.
+		runCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		res, err := b.Run(runCtx)
+		if errors.Is(err, ranking.ErrAlreadyRunning) {
+			writeJSON(w, http.StatusConflict, `{"status":"already_running"}`)
+			return
+		}
+		if err != nil {
+			log.Printf("apid: ranking run failed: %v", err)
+			writeJSON(w, http.StatusInternalServerError, `{"status":"failed"}`)
+			return
+		}
+		writeJSON(w, http.StatusOK, fmt.Sprintf(
+			`{"status":"ok","price_version":%d,"owners":%d}`, res.PriceVersion, res.OwnerCount))
+	}
 }
 
 // startWorldEventApprover subscribes to worldevent.proposal.* and gives the

@@ -28,6 +28,10 @@ type Config struct {
 	// OutboxInterval is how often the relay polls unpublished outbox rows
 	// (must be ≤1s to meet the publish latency budget, 3.6).
 	OutboxInterval time.Duration
+
+	// RankingInterval is how often the asset ranking batch runs unattended
+	// (09B 3.9: 1時間ごと). The batch can also be triggered via /admin/ranking/run.
+	RankingInterval time.Duration
 }
 
 // Load reads the environment and returns a Config with dev-safe defaults.
@@ -40,6 +44,7 @@ func Load() *Config {
 		GRPCSharedSecret: strings.TrimSpace(os.Getenv("API_GRPC_SHARED_SECRET")),
 		ItemDefPath:      envOr("ITEM_DEFINITIONS_PATH", "data/item_definitions.json"),
 		OutboxInterval:   durationOr("OUTBOX_RELAY_INTERVAL", time.Second),
+		RankingInterval:  durationOr("RANKING_BATCH_INTERVAL", time.Hour),
 	}
 }
 

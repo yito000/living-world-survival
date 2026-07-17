@@ -27,6 +27,16 @@ class EconomyServiceStub:
                 request_serializer=survival_dot_v1_dot_economy__pb2.CommitSaleRequest.SerializeToString,
                 response_deserializer=survival_dot_v1_dot_economy__pb2.CommitSaleResponse.FromString,
                 _registered_method=True)
+        self.RegisterBuyer = channel.unary_unary(
+                '/survival.v1.EconomyService/RegisterBuyer',
+                request_serializer=survival_dot_v1_dot_economy__pb2.RegisterBuyerRequest.SerializeToString,
+                response_deserializer=survival_dot_v1_dot_economy__pb2.RegisterBuyerResponse.FromString,
+                _registered_method=True)
+        self.DespawnBuyer = channel.unary_unary(
+                '/survival.v1.EconomyService/DespawnBuyer',
+                request_serializer=survival_dot_v1_dot_economy__pb2.DespawnBuyerRequest.SerializeToString,
+                response_deserializer=survival_dot_v1_dot_economy__pb2.DespawnBuyerResponse.FromString,
+                _registered_method=True)
 
 
 class EconomyServiceServicer:
@@ -49,6 +59,20 @@ class EconomyServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def RegisterBuyer(self, request, context):
+        """M6 追加：DS が seed/出現時刻を採番して登録、API が在庫を決定的に生成し確定。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DespawnBuyer(self, request, context):
+        """M6 追加：despawn 準備／完了。準備で新規購入を拒否、完了で残在庫を締める。
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EconomyServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -61,6 +85,16 @@ def add_EconomyServiceServicer_to_server(servicer, server):
                     servicer.CommitSale,
                     request_deserializer=survival_dot_v1_dot_economy__pb2.CommitSaleRequest.FromString,
                     response_serializer=survival_dot_v1_dot_economy__pb2.CommitSaleResponse.SerializeToString,
+            ),
+            'RegisterBuyer': grpc.unary_unary_rpc_method_handler(
+                    servicer.RegisterBuyer,
+                    request_deserializer=survival_dot_v1_dot_economy__pb2.RegisterBuyerRequest.FromString,
+                    response_serializer=survival_dot_v1_dot_economy__pb2.RegisterBuyerResponse.SerializeToString,
+            ),
+            'DespawnBuyer': grpc.unary_unary_rpc_method_handler(
+                    servicer.DespawnBuyer,
+                    request_deserializer=survival_dot_v1_dot_economy__pb2.DespawnBuyerRequest.FromString,
+                    response_serializer=survival_dot_v1_dot_economy__pb2.DespawnBuyerResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -120,6 +154,60 @@ class EconomyService:
             '/survival.v1.EconomyService/CommitSale',
             survival_dot_v1_dot_economy__pb2.CommitSaleRequest.SerializeToString,
             survival_dot_v1_dot_economy__pb2.CommitSaleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RegisterBuyer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/survival.v1.EconomyService/RegisterBuyer',
+            survival_dot_v1_dot_economy__pb2.RegisterBuyerRequest.SerializeToString,
+            survival_dot_v1_dot_economy__pb2.RegisterBuyerResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DespawnBuyer(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/survival.v1.EconomyService/DespawnBuyer',
+            survival_dot_v1_dot_economy__pb2.DespawnBuyerRequest.SerializeToString,
+            survival_dot_v1_dot_economy__pb2.DespawnBuyerResponse.FromString,
             options,
             channel_credentials,
             insecure,

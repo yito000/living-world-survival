@@ -1,0 +1,16 @@
+{
+  "_comment": "通常 Buyer の在庫テーブル（付録B.3 / 09B 3.5）。資源・素材・食料中心で、レア枠は低確率。rare_weapon_buyer_v1 と同じくレア保証なし（guaranteed_rare_slots=0）。",
+  "inventory_table_id": "general_goods_buyer_v1",
+  "slot_count_min": 4,
+  "slot_count_max": 8,
+  "entries": [
+    { "item_tag": "resource.ore.iron", "weight": 30 },
+    { "item_tag": "material.ingot.iron", "weight": 20 },
+    { "item_tag": "food.cooked.meat", "weight": 20 },
+    { "item_tag": "material.leather", "weight": 15 },
+    { "item_tag": "tool.mining", "weight": 10 },
+    { "item_tag": "food.luxury", "weight": 4 },
+    { "item_tag": "material.ingot.rare", "weight": 1 }
+  ],
+  "guaranteed_rare_slots": 0
+}
