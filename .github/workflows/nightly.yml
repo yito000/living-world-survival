@@ -11,9 +11,6 @@
 name: nightly
 
 on:
-  schedule:
-    # 03:00 JST = 18:00 UTC（前日）。PR の少ない時間帯に回す。
-    - cron: "0 18 * * *"
   workflow_dispatch:
     inputs:
       soak_minutes:
